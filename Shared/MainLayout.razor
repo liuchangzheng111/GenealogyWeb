@@ -1,15 +1,28 @@
+@*
+    全局布局：顶栏根据 AuthorizeView 切换登录/注册与用户名、退出链接。
+    退出使用 GET /logout（浏览器请求），以便清除认证 Cookie；详见 Program.cs 注释。
+*@
 @namespace GenealogyApp
 @inherits LayoutComponentBase
+@using Microsoft.AspNetCore.Components.Authorization
 
 <div class="container-fluid">
     <div class="row">
         <div class="col-12">
             <nav class="navbar navbar-expand-lg navbar-light bg-light">
-                    <a class="navbar-brand" href="/">GenealogyApp</a>
-                    <div class="ms-auto">
-                        <a class="btn btn-outline-primary me-2" href="/login">登录</a>
-                        <a class="btn btn-outline-secondary" href="/register">注册</a>
-                    </div>
+                <a class="navbar-brand" href="/">GenealogyApp</a>
+                <div class="ms-auto d-flex align-items-center gap-2">
+                    <AuthorizeView>
+                        <Authorized Context="auth">
+                            <span class="navbar-text me-2">@auth.User.Identity?.Name</span>
+                            <a class="btn btn-outline-secondary" href="/logout">退出</a>
+                        </Authorized>
+                        <NotAuthorized>
+                            <a class="btn btn-outline-primary" href="/login">登录</a>
+                            <a class="btn btn-outline-secondary" href="/register">注册</a>
+                        </NotAuthorized>
+                    </AuthorizeView>
+                </div>
             </nav>
         </div>
     </div>

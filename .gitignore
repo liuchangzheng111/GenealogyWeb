@@ -5,6 +5,7 @@
 [Ll]ogs/
 out/
 publish/
+_build_verify/
 
 # Visual Studio / MSBuild
 .vs/

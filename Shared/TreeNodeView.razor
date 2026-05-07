@@ -1,3 +1,6 @@
+@*
+    递归渲染 GenealogiesController 返回的 TreeNodeDto：每个节点展示姓名、性别、出生年，子节点缩进列表。
+*@
 @using System.Linq
 
 <li class="mb-2">
@@ -19,6 +22,7 @@
 </li>
 
 @code {
+    // 由父级传入的当前树节点（勿在子组件内修改 Children 集合结构）
     [Parameter]
     public GenealogyApp.Controllers.TreeNodeDto Node { get; set; } = null!;
 }
