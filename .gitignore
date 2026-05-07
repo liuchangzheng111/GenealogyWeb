@@ -1,0 +1,60 @@
+# Build
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+out/
+publish/
+
+# Visual Studio / MSBuild
+.vs/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+*.rsuser
+*.sln.docstates
+
+# JetBrains Rider / IntelliJ
+.idea/
+*.sln.iml
+
+# VS Code（个人设置；若需共享 launch/tasks，可删掉下面两行并改为白名单）
+.vscode/*
+!.vscode/extensions.json
+
+# NuGet
+*.nupkg
+**/*.nuget.props
+**/*.nuget.targets
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# .NET 用户机密（勿提交真实连接串/密钥；连接串请用 User Secrets 或环境变量）
+secrets.json
+*.pfx
+*.snk
+
+# 本地覆盖配置（若有）
+appsettings.*.local.json
+appsettings.Development.local.json
+
+# 测试与覆盖率
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.trx
+*.coverage
+*.coveragexml
+coverage*.json
+*.opencover.xml
+
+# 操作系统与杂项
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# 本地调试遗留文件
+cookies.txt
+*.log

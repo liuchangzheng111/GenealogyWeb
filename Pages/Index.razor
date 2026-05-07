@@ -1,0 +1,122 @@
+@page "/"
+@using Microsoft.AspNetCore.Components.Authorization
+@using GenealogyApp.Controllers
+@inject HttpClient Http
+@inject NavigationManager Nav
+
+<h3>Dashboard</h3>
+
+<AuthorizeView>
+    <Authorized Context="authState">
+        <div class="alert alert-success mt-2">
+            当前登录用户：<strong>@authState.User.Identity?.Name</strong>
+            ，邮箱：<strong>@authState.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value</strong>
+        </div>
+    </Authorized>
+    <NotAuthorized>
+        <div class="alert alert-secondary mt-2">未登录</div>
+    </NotAuthorized>
+</AuthorizeView>
+
+<div class="row mt-3">
+    <div class="col-md-4 mb-3">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title">族谱数量</h5>
+                <p class="display-6 mb-0">@summary?.GenealogyCount</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4 mb-3">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title">成员总数</h5>
+                <p class="display-6 mb-0">@summary?.TotalMembers</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4 mb-3">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title">男女比例</h5>
+                <p class="mb-1">男：@summary?.MaleCount (@summary?.MaleRatio%)</p>
+                <p class="mb-0">女：@summary?.FemaleCount (@summary?.FemaleRatio%)</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<p class="mt-2">当前已生成一个示例族谱：张氏族谱。</p>
+
+<div class="card shadow-sm mt-4">
+    <div class="card-body">
+        <h5 class="card-title">族谱树预览</h5>
+        <p class="text-muted mb-2">展示当前示例族谱的一条根祖先分支。</p>
+
+        @if (treeRoots is null)
+        {
+            <div>正在加载族谱树...</div>
+        }
+        else if (treeRoots.Count == 0)
+        {
+            <div>暂无可展示的族谱树。</div>
+        }
+        else
+        {
+            <ul class="list-unstyled">
+                @foreach (var root in treeRoots)
+                {
+                    <TreeNodeView Node="root" />
+                }
+            </ul>
+        }
+    </div>
+</div>
+
+<button class="btn btn-primary" @onclick="LoadGenealogies">加载族谱</button>
+
+@if (genealogies != null)
+{
+    <ul class="mt-3">
+        @foreach (var g in genealogies)
+        {
+            <li>@g.Title (@g.Surname) - @g.Id</li>
+        }
+    </ul>
+}
+
+@code {
+    private List<GenealogyDto>? genealogies;
+    private DashboardSummaryDto? summary;
+    private List<TreeNodeDto>? treeRoots;
+
+    private record GenealogyDto(Guid Id, string Title, string Surname);
+    private record DashboardSummaryDto(int GenealogyCount, int TotalMembers, int MaleCount, int FemaleCount, double MaleRatio, double FemaleRatio);
+
+    protected override async Task OnInitializedAsync()
+    {
+        summary = await Http.GetFromJsonAsync<DashboardSummaryDto>(new Uri(new Uri(Nav.BaseUri), "api/dashboard/summary"));
+        genealogies = await Http.GetFromJsonAsync<List<GenealogyDto>>(new Uri(new Uri(Nav.BaseUri), "api/genealogies"));
+
+        if (genealogies != null && genealogies.Count > 0)
+        {
+            treeRoots = await Http.GetFromJsonAsync<List<TreeNodeDto>>(
+                new Uri(new Uri(Nav.BaseUri), $"api/genealogies/{genealogies[0].Id}/tree"));
+        }
+        else
+        {
+            treeRoots = new List<TreeNodeDto>();
+        }
+    }
+
+    private async Task LoadGenealogies()
+    {
+        genealogies = await Http.GetFromJsonAsync<List<GenealogyDto>>(new Uri(new Uri(Nav.BaseUri), "api/genealogies"));
+
+        if (genealogies != null && genealogies.Count > 0)
+        {
+            treeRoots = await Http.GetFromJsonAsync<List<TreeNodeDto>>(
+                new Uri(new Uri(Nav.BaseUri), $"api/genealogies/{genealogies[0].Id}/tree"));
+        }
+    }
+}

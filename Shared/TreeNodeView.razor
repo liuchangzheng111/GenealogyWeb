@@ -1,0 +1,24 @@
+@using System.Linq
+
+<li class="mb-2">
+    <div>
+        <strong>@Node.Name</strong>
+        <span class="text-muted">@(Node.Gender ?? "未知")</span>
+        <span class="text-muted">@((Node.BirthYear.HasValue ? $"，{Node.BirthYear}年出生" : string.Empty))</span>
+    </div>
+
+    @if (Node.Children.Any())
+    {
+        <ul class="ms-4 border-start ps-3">
+            @foreach (var child in Node.Children)
+            {
+                <TreeNodeView Node="child" />
+            }
+        </ul>
+    }
+</li>
+
+@code {
+    [Parameter]
+    public GenealogyApp.Controllers.TreeNodeDto Node { get; set; } = null!;
+}
