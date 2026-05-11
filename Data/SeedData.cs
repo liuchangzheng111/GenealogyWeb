@@ -1,7 +1,7 @@
-using GenealogyApp.Models;
-using GenealogyApp.Services;
+using GenealogyWeb.Models;
+using GenealogyWeb.Services;
 
-namespace GenealogyApp.Data
+namespace GenealogyWeb.Data
 {
     /// <summary>
     /// 开发/演示用种子数据：保证存在可登录的演示账号，以及「张氏族谱」示例（含少量成员与亲子关系）。

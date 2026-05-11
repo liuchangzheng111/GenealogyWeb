@@ -1,11 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using GenealogyApp.Data;
-using GenealogyApp.Models;
-using GenealogyApp.Services;
+using GenealogyWeb.Data;
+using GenealogyWeb.Models;
+using GenealogyWeb.Services;
 
-namespace GenealogyApp.Controllers
+namespace GenealogyWeb.Controllers
 {
     /// <summary>
     /// 族谱 CRUD（当前含列表/详情/创建）与<strong>后代树</strong> JSON（供 Blazor 递归渲染）。
@@ -60,6 +60,22 @@ namespace GenealogyApp.Controllers
             return Ok(item);
         }
 
+        /// <summary>当前用户在该族谱中的角色（用于前端控制按钮显隐）。</summary>
+        [HttpGet("{id}/me")]
+        public async Task<IActionResult> GetMyMembership(Guid id, CancellationToken cancellationToken)
+        {
+            var userId = User.GetUserIdOrNull();
+            if (userId is null) return Unauthorized();
+
+            if (!await _access.CanAccessGenealogyAsync(userId.Value, id, cancellationToken))
+            {
+                return Forbid();
+            }
+
+            var role = await _access.GetMembershipRoleAsync(userId.Value, id, cancellationToken);
+            return Ok(new { role });
+        }
+
         /// <summary>
         /// 创建族谱：<see cref="Genealogy.CreatedByUserId"/> 取自登录用户，并写入 Owner 的 <see cref="GenealogyUser"/>。
         /// 请勿信任客户端传入的创建者 Id。
@@ -97,6 +113,166 @@ namespace GenealogyApp.Controllers
 
             await _db.SaveChangesAsync(cancellationToken);
             return CreatedAtAction(nameof(Get), new { id = model.Id }, model);
+        }
+
+        /// <summary>更新族谱元数据；需 Owner 或 Editor。</summary>
+        [HttpPut("{id}")]
+        public async Task<IActionResult> Update(Guid id, [FromBody] UpdateGenealogyDto dto, CancellationToken cancellationToken)
+        {
+            var userId = User.GetUserIdOrNull();
+            if (userId is null) return Unauthorized();
+
+            if (!await _access.CanEditGenealogyContentAsync(userId.Value, id, cancellationToken))
+            {
+                return Forbid();
+            }
+
+            if (string.IsNullOrWhiteSpace(dto.Title) || string.IsNullOrWhiteSpace(dto.Surname))
+            {
+                return BadRequest("谱名与姓氏不能为空。");
+            }
+
+            var entity = await _db.Genealogies.FindAsync(new object[] { id }, cancellationToken);
+            if (entity == null) return NotFound();
+
+            entity.Title = dto.Title.Trim();
+            entity.Surname = dto.Surname.Trim();
+            entity.CompiledAt = dto.CompiledAt;
+            await _db.SaveChangesAsync(cancellationToken);
+            return Ok(entity);
+        }
+
+        /// <summary>删除族谱及其成员、血缘、婚姻、协作行；仅 Owner（含创建者）。</summary>
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
+        {
+            var userId = User.GetUserIdOrNull();
+            if (userId is null) return Unauthorized();
+
+            if (!await _access.CanManageGenealogyAsync(userId.Value, id, cancellationToken))
+            {
+                return Forbid();
+            }
+
+            var exists = await _db.Genealogies.AnyAsync(g => g.Id == id, cancellationToken);
+            if (!exists) return NotFound();
+
+            await using var tx = await _db.Database.BeginTransactionAsync(cancellationToken);
+            await _db.ParentChildren.Where(pc => pc.GenealogyId == id).ExecuteDeleteAsync(cancellationToken);
+            await _db.Marriages.Where(m => m.GenealogyId == id).ExecuteDeleteAsync(cancellationToken);
+            await _db.Persons.Where(p => p.GenealogyId == id).ExecuteDeleteAsync(cancellationToken);
+            await _db.GenealogyUsers.Where(gu => gu.GenealogyId == id).ExecuteDeleteAsync(cancellationToken);
+            await _db.Genealogies.Where(g => g.Id == id).ExecuteDeleteAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+            return NoContent();
+        }
+
+        /// <summary>按邮箱邀请已注册用户；仅 Owner。角色默认为 Editor，可选 Viewer。</summary>
+        [HttpPost("{id}/invite")]
+        public async Task<IActionResult> Invite(Guid id, [FromBody] InviteGenealogyDto dto, CancellationToken cancellationToken)
+        {
+            var userId = User.GetUserIdOrNull();
+            if (userId is null) return Unauthorized();
+
+            if (!await _access.CanManageGenealogyAsync(userId.Value, id, cancellationToken))
+            {
+                return Forbid();
+            }
+
+            if (string.IsNullOrWhiteSpace(dto.Email))
+            {
+                return BadRequest("邮箱不能为空。");
+            }
+
+            var email = dto.Email.Trim();
+            var target = await _db.Users.FirstOrDefaultAsync(u => u.Email == email, cancellationToken);
+            if (target == null)
+            {
+                return NotFound("该邮箱尚未注册。");
+            }
+
+            if (target.Id == userId.Value)
+            {
+                return BadRequest("不能邀请自己。");
+            }
+
+            var role = NormalizeInviteRole(dto.Role);
+            if (role == null)
+            {
+                return BadRequest("角色只能是 Editor 或 Viewer。");
+            }
+
+            var already = await _db.GenealogyUsers.AnyAsync(
+                gu => gu.GenealogyId == id && gu.UserId == target.Id,
+                cancellationToken);
+            if (already)
+            {
+                return Conflict("该用户已是本族谱成员。");
+            }
+
+            _db.GenealogyUsers.Add(new GenealogyUser
+            {
+                GenealogyId = id,
+                UserId = target.Id,
+                Role = role,
+                InvitedByUserId = userId.Value,
+                InvitedAt = DateTime.UtcNow
+            });
+
+            try
+            {
+                await _db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException)
+            {
+                return Conflict("该用户已是本族谱成员。");
+            }
+
+            return Ok(new { message = "邀请成功", userId = target.Id, email = target.Email, role });
+        }
+
+        /// <summary>列出族谱协作成员（含邮箱与角色）。</summary>
+        [HttpGet("{id}/collaborators")]
+        public async Task<IActionResult> GetCollaborators(Guid id, CancellationToken cancellationToken)
+        {
+            var userId = User.GetUserIdOrNull();
+            if (userId is null) return Unauthorized();
+
+            if (!await _access.CanAccessGenealogyAsync(userId.Value, id, cancellationToken))
+            {
+                return Forbid();
+            }
+
+            var rows = await (
+                from gu in _db.GenealogyUsers.AsNoTracking()
+                join u in _db.Users.AsNoTracking() on gu.UserId equals u.Id
+                where gu.GenealogyId == id
+                orderby gu.InvitedAt
+                select new GenealogyCollaboratorDto(u.Id, u.Email, u.UserName, gu.Role, gu.InvitedAt)
+            ).ToListAsync(cancellationToken);
+
+            return Ok(rows);
+        }
+
+        private static string? NormalizeInviteRole(string? role)
+        {
+            if (string.IsNullOrWhiteSpace(role))
+            {
+                return "Editor";
+            }
+
+            var r = role.Trim();
+            if (string.Equals(r, "Editor", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Editor";
+            }
+
+            if (string.Equals(r, "Viewer", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Viewer";
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -197,6 +373,15 @@ namespace GenealogyApp.Controllers
 
     /// <summary>创建族谱 API 的请求体（勿包含创建者 Id）。</summary>
     public record CreateGenealogyDto(string Title, string Surname, DateTime? CompiledAt);
+
+    /// <summary>更新族谱元数据。</summary>
+    public record UpdateGenealogyDto(string Title, string Surname, DateTime? CompiledAt);
+
+    /// <summary>邀请协作者：邮箱须为已注册用户；角色默认 Editor。</summary>
+    public record InviteGenealogyDto(string Email, string? Role);
+
+    /// <summary>协作成员列表项。</summary>
+    public record GenealogyCollaboratorDto(Guid UserId, string Email, string UserName, string Role, DateTime InvitedAt);
 
     /// <summary>树节点 DTO，与 Blazor 组件 <c>TreeNodeView</c> 绑定；子节点递归同结构。</summary>
     public record TreeNodeDto(Guid Id, string Name, string? Gender, int? BirthYear, string? Bio, List<TreeNodeDto> Children);

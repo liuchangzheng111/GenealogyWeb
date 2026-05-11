@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Components.Authorization;
 
-namespace GenealogyApp.Services;
+namespace GenealogyWeb.Services;
 
 /// <summary>
 /// 为 Blazor 提供与 MVC Cookie 认证一致的 <see cref="AuthenticationState"/>。

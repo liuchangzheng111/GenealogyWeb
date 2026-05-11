@@ -1,6 +1,6 @@
 using System.Security.Claims;
 
-namespace GenealogyApp.Controllers;
+namespace GenealogyWeb.Controllers;
 
 /// <summary>
 /// 控制器内复用的 Claims 解析扩展，避免各处重复 <c>FindFirst(ClaimTypes.NameIdentifier)</c>。

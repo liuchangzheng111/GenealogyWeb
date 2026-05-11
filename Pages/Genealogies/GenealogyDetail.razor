@@ -1,0 +1,289 @@
+@page "/genealogies/{GenealogyId:guid}"
+@inject HttpClient Http
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+
+<h3>族谱设置</h3>
+
+<AuthorizeView>
+    <NotAuthorized>
+        <div class="alert alert-warning">请先<a href="/login">登录</a>。</div>
+    </NotAuthorized>
+    <Authorized>
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <div class="alert alert-danger">@_error</div>
+        }
+        @if (!string.IsNullOrEmpty(_info))
+        {
+            <div class="alert alert-success">@_info</div>
+        }
+
+        @if (_genealogy is null)
+        {
+            <p>加载中…</p>
+        }
+        else
+        {
+            <p class="text-muted mb-3">
+                <a href="/genealogies">← 返回列表</a>
+                ·
+                <a href="@($"/genealogies/{GenealogyId}/members")">成员管理</a>
+            </p>
+
+            @if (_canEdit)
+            {
+                <div class="card shadow-sm mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title">编辑信息</h5>
+                        <div class="mb-2">
+                            <label class="form-label">谱名</label>
+                            <input class="form-control" @bind="_editTitle" />
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">姓氏</label>
+                            <input class="form-control" @bind="_editSurname" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">修谱时间（UTC 存库；可留空）</label>
+                            <input type="datetime-local" class="form-control" @bind="_editCompiledLocal" />
+                        </div>
+                        <button type="button" class="btn btn-primary" @onclick="SaveAsync" disabled="@_busy">保存</button>
+                    </div>
+                </div>
+            }
+
+            @if (_canManage)
+            {
+                <div class="card shadow-sm mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title">邀请协作者</h5>
+                        <p class="text-muted small">仅已注册用户可被邀请；角色可选 Editor（可改成员）或 Viewer（只读）。</p>
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-5">
+                                <label class="form-label">对方邮箱</label>
+                                <input class="form-control" @bind="_inviteEmail" />
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">角色</label>
+                                <select class="form-select" @bind="_inviteRole">
+                                    <option value="Editor">Editor</option>
+                                    <option value="Viewer">Viewer</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <button type="button" class="btn btn-outline-primary" @onclick="InviteAsync" disabled="@_busy">发送邀请</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                @if (_confirmDelete)
+                {
+                    <div class="alert alert-warning">
+                        <p>确定删除整个族谱？将同时删除所有成员与关系，且不可恢复。</p>
+                        <button type="button" class="btn btn-danger me-2" @onclick="DeleteConfirmedAsync" disabled="@_busy">确认删除</button>
+                        <button type="button" class="btn btn-secondary" @onclick="() => _confirmDelete = false">取消</button>
+                    </div>
+                }
+                else
+                {
+                    <button type="button" class="btn btn-outline-danger mb-4" @onclick="() => _confirmDelete = true">删除族谱</button>
+                }
+            }
+
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title">协作成员</h5>
+                    @if (_collaborators is null)
+                    {
+                        <p>加载中…</p>
+                    }
+                    else if (_collaborators.Count == 0)
+                    {
+                        <p class="text-muted">暂无记录。</p>
+                    }
+                    else
+                    {
+                        <ul class="list-group list-group-flush">
+                            @foreach (var c in _collaborators)
+                            {
+                                <li class="list-group-item d-flex justify-content-between">
+                                    <span>@c.UserName &lt;@c.Email&gt;</span>
+                                    <span class="badge bg-secondary">@c.Role</span>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+            </div>
+        }
+    </Authorized>
+</AuthorizeView>
+
+@code {
+    [Parameter] public Guid GenealogyId { get; set; }
+
+    private Genealogy? _genealogy;
+    private List<GenealogyCollaboratorDto>? _collaborators;
+    private string? _error;
+    private string? _info;
+    private bool _busy;
+    private bool _canEdit;
+    private bool _canManage;
+    private bool _confirmDelete;
+
+    private string _editTitle = "";
+    private string _editSurname = "";
+    private DateTime? _editCompiledLocal;
+
+    private string _inviteEmail = "";
+    private string _inviteRole = "Editor";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _error = null;
+        _info = null;
+        _confirmDelete = false;
+
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        if (auth.User.Identity?.IsAuthenticated != true)
+        {
+            return;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var baseUri = new Uri(Nav.BaseUri);
+            _genealogy = await Http.GetFromJsonAsync<Genealogy>(new Uri(baseUri, $"api/genealogies/{GenealogyId}"));
+            if (_genealogy == null)
+            {
+                return;
+            }
+
+            _editTitle = _genealogy.Title;
+            _editSurname = _genealogy.Surname;
+            _editCompiledLocal = _genealogy.CompiledAt?.ToLocalTime();
+
+            var me = await Http.GetFromJsonAsync<MeMembershipDto>(new Uri(baseUri, $"api/genealogies/{GenealogyId}/me"));
+            var role = me?.Role;
+            _canManage = string.Equals(role, "Owner", StringComparison.OrdinalIgnoreCase);
+            _canEdit = _canManage || string.Equals(role, "Editor", StringComparison.OrdinalIgnoreCase);
+
+            _collaborators = await Http.GetFromJsonAsync<List<GenealogyCollaboratorDto>>(
+                new Uri(baseUri, $"api/genealogies/{GenealogyId}/collaborators"));
+        }
+        catch (Exception ex)
+        {
+            _error = "加载失败：" + ex.Message;
+            _genealogy = null;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_busy || !_canEdit) return;
+        _busy = true;
+        _error = null;
+        _info = null;
+        try
+        {
+            DateTime? utc = _editCompiledLocal.HasValue
+                ? DateTime.SpecifyKind(_editCompiledLocal.Value, DateTimeKind.Local).ToUniversalTime()
+                : null;
+
+            var resp = await Http.PutAsJsonAsync(
+                new Uri(new Uri(Nav.BaseUri), $"api/genealogies/{GenealogyId}"),
+                new UpdateGenealogyDto(_editTitle.Trim(), _editSurname.Trim(), utc));
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                _error = await resp.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _info = "已保存。";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task InviteAsync()
+    {
+        if (_busy || !_canManage) return;
+        _busy = true;
+        _error = null;
+        _info = null;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync(
+                new Uri(new Uri(Nav.BaseUri), $"api/genealogies/{GenealogyId}/invite"),
+                new InviteGenealogyDto(_inviteEmail.Trim(), _inviteRole));
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                _error = await resp.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _inviteEmail = "";
+            _info = "邀请已发送。";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteConfirmedAsync()
+    {
+        if (_busy || !_canManage) return;
+        _busy = true;
+        _error = null;
+        try
+        {
+            var resp = await Http.DeleteAsync(new Uri(new Uri(Nav.BaseUri), $"api/genealogies/{GenealogyId}"));
+            if (!resp.IsSuccessStatusCode)
+            {
+                _error = await resp.Content.ReadAsStringAsync();
+                _confirmDelete = false;
+                return;
+            }
+
+            Nav.NavigateTo("/genealogies", forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _confirmDelete = false;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private sealed class MeMembershipDto
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("role")]
+        public string? Role { get; set; }
+    }
+}
+

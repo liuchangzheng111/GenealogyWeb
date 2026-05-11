@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace GenealogyApp.Models
+namespace GenealogyWeb.Models
 {
     /// <summary>
     /// 有向亲子边：Parent → Child，表示血缘上的父母与子女关系（可区分父/母等语义）。

@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace GenealogyApp.Models
+namespace GenealogyWeb.Models
 {
     /// <summary>婚姻事实：配偶双方均为 <see cref="Person"/>，同属于一条 <see cref="Genealogy"/>。</summary>
     public class Marriage

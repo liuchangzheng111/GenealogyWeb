@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace GenealogyApp.Services
+namespace GenealogyWeb.Services
 {
     /// <summary>
     /// 密码存储：PBKDF2（Rfc2898DeriveBytes / SHA-256），带随机盐与可配置迭代次数。

@@ -1,4 +1,4 @@
-# GenealogyApp
+# GenealogyWeb
 
 一个用于族谱管理的 ASP.NET Core Blazor Server 原型项目，支持用户注册/登录、登录后查看当前用户信息、族谱列表展示，以及后续扩展的成员管理、树状预览和亲缘关系查询。
 
@@ -11,9 +11,11 @@
 - 登录后显示当前用户信息
 - 首页 Dashboard
 - 族谱列表 API（仅本人创建或受邀可见）
+- 族谱与成员的 **CRUD**（含删除族谱级联清理）
+- **按邮箱邀请**已注册用户（`Editor` / `Viewer`，仅 Owner）
 - Dashboard 汇总（仅统计有权访问的族谱内成员）
 - MySQL 8 数据库（EF Core **Migrations** + 启动时 `Migrate()`）
-- 简单图形化界面
+- Blazor 页面：`/genealogies`、族谱设置、成员管理
 
 ## 技术栈
 
@@ -43,6 +45,9 @@ http://localhost:5000
 ## 页面说明
 
 - `/`：Dashboard，显示当前登录用户和族谱列表入口
+- `/genealogies`：族谱列表与新建
+- `/genealogies/{id}`：族谱设置（编辑、邀请、删除）
+- `/genealogies/{id}/members`：成员增删改
 - `/register`：注册页面
 - `/login`：登录页面
 
@@ -60,14 +65,21 @@ http://localhost:5000
 
 - `GET /api/genealogies`：仅返回当前用户创建或受邀的族谱
 - `GET /api/genealogies/{id}`
+- `GET /api/genealogies/{id}/me`：当前用户在本族谱角色（`Owner` / `Editor` / `Viewer`）
 - `GET /api/genealogies/{id}/tree`
+- `GET /api/genealogies/{id}/collaborators`：协作成员列表
 - `POST /api/genealogies`：请求体 JSON `{ "title", "surname", "compiledAt?" }`，创建者由服务端从登录态写入
+- `PUT /api/genealogies/{id}`：更新元数据（Owner / Editor）
+- `DELETE /api/genealogies/{id}`：删除整本族谱及关联数据（仅 Owner）
+- `POST /api/genealogies/{id}/invite`：请求体 `{ "email", "role?" }`，`role` 为 `Editor` 或 `Viewer`（仅 Owner）
 
 ### 人员接口（需登录 Cookie）
 
 - `GET /api/persons/byGenealogy/{gid}?q=`
 - `GET /api/persons/{id}`
-- `POST /api/persons`
+- `POST /api/persons`（Owner / Editor）
+- `PUT /api/persons/{id}`：请求体 `UpdatePersonDto`（Owner / Editor）
+- `DELETE /api/persons/{id}`（Owner / Editor）
 
 ## 数据库说明
 
@@ -95,10 +107,8 @@ dotnet dotnet-ef database update
 
 ## 后续计划
 
-- 族谱与成员的完整 CRUD
-- 树状谱系展示
+- 树状谱系展示增强（选根、多分支）
 - 祖先查询
 - 两人亲缘关系路径查询
 - Dashboard 统计与筛选细化
-- 族谱邀请协作（写入 `GenealogyUsers` 的完整流程）
 

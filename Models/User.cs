@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace GenealogyApp.Models
+namespace GenealogyWeb.Models
 {
     /// <summary>应用注册用户：登录标识为 <see cref="Email"/>（唯一性在业务层校验）。</summary>
     public class User

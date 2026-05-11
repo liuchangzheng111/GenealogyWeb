@@ -1,0 +1,140 @@
+@page "/genealogies"
+@inject HttpClient Http
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+
+<h3>族谱管理</h3>
+
+<AuthorizeView>
+    <NotAuthorized>
+        <div class="alert alert-warning">请先<a href="/login">登录</a>。</div>
+    </NotAuthorized>
+    <Authorized>
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <div class="alert alert-danger">@_error</div>
+        }
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-body">
+                <h5 class="card-title">新建族谱</h5>
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-4">
+                        <label class="form-label">谱名</label>
+                        <input class="form-control" @bind="_newTitle" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">姓氏</label>
+                        <input class="form-control" @bind="_newSurname" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label d-block">&nbsp;</label>
+                        <button type="button" class="btn btn-primary w-100" @onclick="CreateAsync" disabled="@_busy">创建</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @if (_items is null)
+        {
+            <p>加载中…</p>
+        }
+        else if (_items.Count == 0)
+        {
+            <p class="text-muted">暂无族谱，请先创建。</p>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>谱名</th>
+                            <th>姓氏</th>
+                            <th>修谱时间</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var g in _items)
+                        {
+                            <tr>
+                                <td>@g.Title</td>
+                                <td>@g.Surname</td>
+                                <td>@(g.CompiledAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")</td>
+                                <td>
+                                    <a class="btn btn-sm btn-outline-primary" href="@($"/genealogies/{g.Id}")">管理</a>
+                                    <a class="btn btn-sm btn-outline-secondary" href="@($"/genealogies/{g.Id}/members")">成员</a>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </Authorized>
+</AuthorizeView>
+
+@code {
+    private List<Genealogy>? _items;
+    private string? _error;
+    private bool _busy;
+    private string _newTitle = "";
+    private string _newSurname = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        if (auth.User.Identity?.IsAuthenticated != true)
+        {
+            return;
+        }
+
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _error = null;
+        try
+        {
+            _items = await Http.GetFromJsonAsync<List<Genealogy>>(new Uri(new Uri(Nav.BaseUri), "api/genealogies"));
+        }
+        catch (Exception ex)
+        {
+            _error = "加载失败：" + ex.Message;
+            _items = new List<Genealogy>();
+        }
+    }
+
+    private async Task CreateAsync()
+    {
+        if (_busy) return;
+        _busy = true;
+        _error = null;
+        try
+        {
+            var resp = await Http.PostAsJsonAsync(
+                new Uri(new Uri(Nav.BaseUri), "api/genealogies"),
+                new CreateGenealogyDto(_newTitle.Trim(), _newSurname.Trim(), null));
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                _error = await resp.Content.ReadAsStringAsync();
+                return;
+            }
+
+            _newTitle = "";
+            _newSurname = "";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

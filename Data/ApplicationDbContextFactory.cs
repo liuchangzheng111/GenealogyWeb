@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.Configuration;
 using Pomelo.EntityFrameworkCore.MySql.Infrastructure;
 
-namespace GenealogyApp.Data;
+namespace GenealogyWeb.Data;
 
 /// <summary>
 /// 设计时 DbContext 工厂：供 <c>dotnet ef migrations</c> 在**无运行中应用**的情况下创建上下文。

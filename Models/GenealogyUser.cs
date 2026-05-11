@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace GenealogyApp.Models
+namespace GenealogyWeb.Models
 {
     /// <summary>
     /// 用户与族谱的多对多：表示「受邀协作」或创建时的 Owner 成员关系。

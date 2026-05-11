@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using GenealogyApp.Models;
+using GenealogyWeb.Models;
 
-namespace GenealogyApp.Data
+namespace GenealogyWeb.Data
 {
     /// <summary>
     /// 应用主数据库上下文。实体与表映射由 EF Core 管理，架构变更请使用 Migrations（勿手改已生成迁移文件中的 Up/Down 除非你知道后果）。

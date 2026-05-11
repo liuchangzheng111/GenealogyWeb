@@ -1,5 +1,5 @@
 // =============================================================================
-// GenealogyApp 应用入口（.NET 8 最小宿主模型）
+// GenealogyWeb 应用入口（.NET 8 最小宿主模型）
 // -----------------------------------------------------------------------------
 // 职责概览：
 //   1) 注册 Blazor Server、MVC API、EF Core（MySQL）、Cookie 认证与授权策略；
@@ -13,8 +13,8 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
-using GenealogyApp.Data;
-using GenealogyApp.Services;
+using GenealogyWeb.Data;
+using GenealogyWeb.Services;
 using Pomelo.EntityFrameworkCore.MySql.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);

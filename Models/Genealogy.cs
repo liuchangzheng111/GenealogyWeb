@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace GenealogyApp.Models
+namespace GenealogyWeb.Models
 {
     /// <summary>族谱（一个家族一条记录）：课程字段谱名、姓氏、修谱时间、创建用户。</summary>
     public class Genealogy

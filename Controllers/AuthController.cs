@@ -1,14 +1,14 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using GenealogyApp.Data;
-using GenealogyApp.Models;
-using GenealogyApp.Services;
+using GenealogyWeb.Data;
+using GenealogyWeb.Models;
+using GenealogyWeb.Services;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 
-namespace GenealogyApp.Controllers
+namespace GenealogyWeb.Controllers
 {
     /// <summary>
     /// 认证相关 API：注册、登录、登出、当前用户探测。

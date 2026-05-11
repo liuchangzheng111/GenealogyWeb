@@ -1,10 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using GenealogyApp.Data;
-using GenealogyApp.Services;
+using GenealogyWeb.Data;
+using GenealogyWeb.Services;
 
-namespace GenealogyApp.Controllers
+namespace GenealogyWeb.Controllers
 {
     /// <summary>
     /// 首页 Dashboard 用聚合统计：仅统计当前用户<strong>有权访问的族谱</strong>内的成员。

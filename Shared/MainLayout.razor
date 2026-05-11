@@ -2,7 +2,7 @@
     全局布局：顶栏根据 AuthorizeView 切换登录/注册与用户名、退出链接。
     退出使用 GET /logout（浏览器请求），以便清除认证 Cookie；详见 Program.cs 注释。
 *@
-@namespace GenealogyApp
+@namespace GenealogyWeb
 @inherits LayoutComponentBase
 @using Microsoft.AspNetCore.Components.Authorization
 
@@ -10,7 +10,12 @@
     <div class="row">
         <div class="col-12">
             <nav class="navbar navbar-expand-lg navbar-light bg-light">
-                <a class="navbar-brand" href="/">GenealogyApp</a>
+                <a class="navbar-brand" href="/">GenealogyWeb</a>
+                <AuthorizeView>
+                    <Authorized>
+                        <a class="nav-link d-inline-block me-3" href="/genealogies">族谱管理</a>
+                    </Authorized>
+                </AuthorizeView>
                 <div class="ms-auto d-flex align-items-center gap-2">
                     <AuthorizeView>
                         <Authorized Context="auth">

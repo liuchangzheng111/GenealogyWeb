@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace GenealogyApp.Models
+namespace GenealogyWeb.Models
 {
     /// <summary>族谱内的一名成员（人物）。</summary>
     /// <remarks>姓名仅存 <see cref="GivenName"/>；与 <see cref="Genealogy.Surname"/> 组合显示属 UI 层约定。</remarks>

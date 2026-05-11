@@ -1,4 +1,4 @@
-namespace GenealogyApp.Services;
+namespace GenealogyWeb.Services;
 
 /// <summary>
 /// Blazor Server 在**服务端**用 <see cref="System.Net.Http.HttpClient"/> 转发请求时，出站消息默认**不包含**浏览器发来的 Cookie。
