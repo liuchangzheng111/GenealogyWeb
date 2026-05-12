@@ -11,7 +11,8 @@ public static class ApiUiMessage
     /// <summary>与 ASP.NET Core 默认 camelCase JSON 对齐的反序列化选项。</summary>
     public static readonly JsonSerializerOptions JsonReadOptions = new()
     {
-        PropertyNameCaseInsensitive = true
+        PropertyNameCaseInsensitive = true,
+        MaxDepth = 256
     };
     public static async Task<string> FormatAsync(HttpResponseMessage response, CancellationToken cancellationToken = default)
     {

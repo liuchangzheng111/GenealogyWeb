@@ -24,15 +24,99 @@ namespace GenealogyWeb.Data
         {
             base.OnModelCreating(modelBuilder);
 
-            // 血缘：按父或子查邻接表时走索引。
-            modelBuilder.Entity<ParentChild>()
-                .HasIndex(pc => pc.ParentId);
-            modelBuilder.Entity<ParentChild>()
-                .HasIndex(pc => pc.ChildId);
+            // --- 外键（Restrict：避免级联误删；应用层已按正确顺序删除） ---
+            modelBuilder.Entity<Genealogy>(e =>
+            {
+                e.HasOne<User>()
+                    .WithMany()
+                    .HasForeignKey(g => g.CreatedByUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
 
-            // 成员：同一族谱内按名检索（含 Like）时可部分利用复合索引左前缀。
-            modelBuilder.Entity<Person>()
-                .HasIndex(p => new { p.GenealogyId, p.GivenName });
+            modelBuilder.Entity<GenealogyUser>(e =>
+            {
+                e.HasOne<Genealogy>()
+                    .WithMany()
+                    .HasForeignKey(gu => gu.GenealogyId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                e.HasOne<User>()
+                    .WithMany()
+                    .HasForeignKey(gu => gu.UserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                e.HasOne<User>()
+                    .WithMany()
+                    .HasForeignKey(gu => gu.InvitedByUserId)
+                    .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            modelBuilder.Entity<Person>(e =>
+            {
+                e.HasOne<Genealogy>()
+                    .WithMany()
+                    .HasForeignKey(p => p.GenealogyId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                e.HasIndex(p => new { p.GenealogyId, p.GivenName });
+
+                e.ToTable(t => t.HasCheckConstraint(
+                    "CK_Person_BirthBeforeDeath",
+                    "`BirthYear` IS NULL OR `DeathYear` IS NULL OR `BirthYear` <= `DeathYear`"));
+            });
+
+            modelBuilder.Entity<ParentChild>(e =>
+            {
+                e.HasIndex(pc => pc.ParentId);
+                e.HasIndex(pc => pc.ChildId);
+                // 课程「按族谱 + 父查子 / 多代向下」：复合索引优于单列 GenealogyId 左前缀。
+                e.HasIndex(pc => new { pc.GenealogyId, pc.ParentId });
+
+                e.HasOne<Genealogy>()
+                    .WithMany()
+                    .HasForeignKey(pc => pc.GenealogyId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                e.HasOne<Person>()
+                    .WithMany()
+                    .HasForeignKey(pc => pc.ParentId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                e.HasOne<Person>()
+                    .WithMany()
+                    .HasForeignKey(pc => pc.ChildId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                e.ToTable(t => t.HasCheckConstraint(
+                    "CK_ParentChildren_NotSelf",
+                    "`ParentId` <> `ChildId`"));
+            });
+
+            modelBuilder.Entity<Marriage>(e =>
+            {
+                e.HasOne<Genealogy>()
+                    .WithMany()
+                    .HasForeignKey(m => m.GenealogyId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                e.HasOne<Person>()
+                    .WithMany()
+                    .HasForeignKey(m => m.SpouseAId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                e.HasOne<Person>()
+                    .WithMany()
+                    .HasForeignKey(m => m.SpouseBId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                e.ToTable(t =>
+                {
+                    t.HasCheckConstraint("CK_Marriage_DifferentSpouses", "`SpouseAId` <> `SpouseBId`");
+                    t.HasCheckConstraint(
+                        "CK_Marriage_DivorceAfterWedding",
+                        "`DivorcedAtYear` IS NULL OR `MarriedAtYear` IS NULL OR `DivorcedAtYear` >= `MarriedAtYear`");
+                });
+            });
 
             // 协作：同一用户在同一族谱仅允许一条成员关系（邀请幂等、防止重复行）。
             modelBuilder.Entity<GenealogyUser>()

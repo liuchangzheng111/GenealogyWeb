@@ -22,7 +22,11 @@ var builder = WebApplication.CreateBuilder(args);
 // --- UI 与 API ---
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
-builder.Services.AddControllers();
+builder.Services.AddControllers().AddJsonOptions(o =>
+{
+    // 后代树 / 祖先树为递归 TreeNodeDto；课程大谱 ≥30 代，默认 MaxDepth=32 会抛 JsonException。
+    o.JsonSerializerOptions.MaxDepth = 256;
+});
 
 // HttpContext 在 Blazor 与 Cookie 转发中都需要（勿删）。
 builder.Services.AddHttpContextAccessor();

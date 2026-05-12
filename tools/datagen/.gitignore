@@ -1,0 +1,6 @@
+# 生成 CSV、冒烟目录与 Python 缓存（体积大，勿提交）
+out/
+out_test*/
+_out_*/
+__pycache__/
+*.pyc

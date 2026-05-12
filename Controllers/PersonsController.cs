@@ -71,6 +71,11 @@ namespace GenealogyWeb.Controllers
                 return BadRequest("姓名不能为空。");
             }
 
+            if (dto.BirthYear.HasValue && dto.DeathYear.HasValue && dto.BirthYear > dto.DeathYear)
+            {
+                return BadRequest("出生年不能晚于去世年。");
+            }
+
             if (dto.FatherId.HasValue && dto.MotherId.HasValue && dto.FatherId.Value == dto.MotherId.Value)
             {
                 return BadRequest("父亲和母亲不能是同一人。");
@@ -258,6 +263,11 @@ namespace GenealogyWeb.Controllers
             if (!await _access.CanEditGenealogyContentAsync(userId.Value, entity.GenealogyId, cancellationToken))
             {
                 return Forbid();
+            }
+
+            if (dto.BirthYear.HasValue && dto.DeathYear.HasValue && dto.BirthYear > dto.DeathYear)
+            {
+                return BadRequest("出生年不能晚于去世年。");
             }
 
             if (dto.SyncRelationships)
