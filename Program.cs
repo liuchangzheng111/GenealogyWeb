@@ -31,6 +31,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddScoped<AuthenticationStateProvider, CookiePrincipalAuthenticationStateProvider>();
 builder.Services.AddScoped<IGenealogyAccessService, GenealogyAccessService>();
+builder.Services.AddScoped<ToastService>();
 
 // --- 供 Blazor 组件注入的 HttpClient：同源 API 且携带当前请求的 Cookie ---
 builder.Services.AddTransient<CookieForwardingHandler>();

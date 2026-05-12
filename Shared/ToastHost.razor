@@ -1,0 +1,61 @@
+@namespace GenealogyWeb.Shared
+@implements IDisposable
+@inject ToastService Toasts
+
+@if (_current is not null)
+{
+    <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1080; max-width: min(100vw - 1.5rem, 22rem);">
+        <div class="alert @CssClass shadow-sm mb-0 py-2 px-3 small" role="status" aria-live="polite">
+            @_current.Value.Message
+        </div>
+    </div>
+}
+
+@code {
+    private ToastNotification? _current;
+    private CancellationTokenSource? _cts;
+
+    private string CssClass => _current?.Kind switch
+    {
+        ToastKind.Success => "alert-success",
+        ToastKind.Danger => "alert-danger",
+        ToastKind.Info => "alert-info",
+        _ => "alert-secondary"
+    };
+
+    protected override void OnInitialized()
+    {
+        Toasts.NotificationRaised += OnNotification;
+    }
+
+    private void OnNotification(ToastNotification n)
+    {
+        _ = InvokeAsync(async () =>
+        {
+            _cts?.Cancel();
+            _cts?.Dispose();
+            _cts = new CancellationTokenSource();
+            _current = n;
+            StateHasChanged();
+
+            try
+            {
+                await Task.Delay(3800, _cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            _current = null;
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        Toasts.NotificationRaised -= OnNotification;
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}

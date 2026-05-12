@@ -1,125 +1,147 @@
 @page "/genealogies/{GenealogyId:guid}"
+@attribute [Authorize]
+@using System.Net.Http.Json
 @inject HttpClient Http
 @inject NavigationManager Nav
-@inject AuthenticationStateProvider AuthState
+@inject ToastService Toasts
 
-<h3>族谱设置</h3>
+<PageTitle>族谱设置</PageTitle>
 
-<AuthorizeView>
-    <NotAuthorized>
-        <div class="alert alert-warning">请先<a href="/login">登录</a>。</div>
-    </NotAuthorized>
-    <Authorized>
-        @if (!string.IsNullOrEmpty(_error))
-        {
-            <div class="alert alert-danger">@_error</div>
-        }
-        @if (!string.IsNullOrEmpty(_info))
-        {
-            <div class="alert alert-success">@_info</div>
-        }
+<h3 class="mb-2">族谱设置</h3>
 
-        @if (_genealogy is null)
+@if (!string.IsNullOrEmpty(_error))
+{
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        @_error
+        <button type="button" class="btn-close" @onclick="() => _error = null" aria-label="关闭"></button>
+    </div>
+}
+
+@if (_genealogy is null && string.IsNullOrEmpty(_error))
+{
+    <div class="d-flex align-items-center gap-2 text-muted my-4">
+        <div class="spinner-border spinner-border-sm" role="status"></div>
+        <span>正在加载…</span>
+    </div>
+}
+else if (_genealogy is null)
+{
+    <p class="text-muted">无法加载该族谱，请从<a href="/genealogies">族谱列表</a>重新进入。</p>
+}
+else
+{
+    <p class="text-muted small mb-3">
+        <a href="/genealogies">← 返回列表</a>
+        <span class="mx-1">·</span>
+        <a href="@($"/genealogies/{GenealogyId}/members")">成员管理</a>
+    </p>
+
+    @if (!string.IsNullOrEmpty(_myRole))
+    {
+        <div class="alert alert-light border mb-4 py-2 small" role="status">
+            您在本族谱中的权限：<strong>@RoleUiText.ToChinese(_myRole)</strong>
+            @if (!_canEdit)
+            {
+                <span class="text-muted">（无法修改族谱信息或成员）</span>
+            }
+        </div>
+    }
+
+    @if (_canEdit)
+    {
+        <div class="card shadow-sm mb-4">
+            <div class="card-body">
+                <h5 class="card-title">编辑信息</h5>
+                <p class="text-muted small">修改谱名、姓氏或修谱时间；保存后立即生效。</p>
+                <div class="mb-2">
+                    <label class="form-label">谱名</label>
+                    <input class="form-control" @bind="_editTitle" />
+                </div>
+                <div class="mb-2">
+                    <label class="form-label">姓氏</label>
+                    <input class="form-control" @bind="_editSurname" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">修谱时间</label>
+                    <input type="datetime-local" class="form-control" @bind="_editCompiledLocal" />
+                    <div class="form-text">留空表示未填写；按本地时间选择，保存时转为 UTC 存库。</div>
+                </div>
+                <button type="button" class="btn btn-primary" @onclick="SaveAsync" disabled="@_busy">
+                    @if (_busy)
+                    {
+                        <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                    }
+                    保存
+                </button>
+            </div>
+        </div>
+    }
+
+    @if (_canManage)
+    {
+        <div class="card shadow-sm mb-4">
+            <div class="card-body">
+                <h5 class="card-title">邀请协作者</h5>
+                <p class="text-muted small mb-3">对方须<strong>已注册</strong>；通过邮箱匹配用户。被邀请人登录后即可在列表中看到本族谱。</p>
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-5">
+                        <label class="form-label">对方邮箱</label>
+                        <input class="form-control" type="email" @bind="_inviteEmail" placeholder="friend@example.com" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">权限</label>
+                        <select class="form-select" @bind="_inviteRole">
+                            <option value="Editor">可编辑成员与关系</option>
+                            <option value="Viewer">仅查看</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <button type="button" class="btn btn-outline-primary w-100" @onclick="InviteAsync" disabled="@_busy">发送邀请</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @if (_confirmDelete)
         {
-            <p>加载中…</p>
+            <div class="alert alert-warning">
+                <p class="mb-2"><strong>确定删除整个族谱？</strong>将同时删除所有成员、父母子女、婚姻与协作记录，且不可恢复。</p>
+                <button type="button" class="btn btn-danger me-2" @onclick="DeleteConfirmedAsync" disabled="@_busy">确认删除</button>
+                <button type="button" class="btn btn-secondary" @onclick="() => _confirmDelete = false">取消</button>
+            </div>
         }
         else
         {
-            <p class="text-muted mb-3">
-                <a href="/genealogies">← 返回列表</a>
-                ·
-                <a href="@($"/genealogies/{GenealogyId}/members")">成员管理</a>
-            </p>
-
-            @if (_canEdit)
-            {
-                <div class="card shadow-sm mb-4">
-                    <div class="card-body">
-                        <h5 class="card-title">编辑信息</h5>
-                        <div class="mb-2">
-                            <label class="form-label">谱名</label>
-                            <input class="form-control" @bind="_editTitle" />
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label">姓氏</label>
-                            <input class="form-control" @bind="_editSurname" />
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">修谱时间（UTC 存库；可留空）</label>
-                            <input type="datetime-local" class="form-control" @bind="_editCompiledLocal" />
-                        </div>
-                        <button type="button" class="btn btn-primary" @onclick="SaveAsync" disabled="@_busy">保存</button>
-                    </div>
-                </div>
-            }
-
-            @if (_canManage)
-            {
-                <div class="card shadow-sm mb-4">
-                    <div class="card-body">
-                        <h5 class="card-title">邀请协作者</h5>
-                        <p class="text-muted small">仅已注册用户可被邀请；角色可选 Editor（可改成员）或 Viewer（只读）。</p>
-                        <div class="row g-2 align-items-end">
-                            <div class="col-md-5">
-                                <label class="form-label">对方邮箱</label>
-                                <input class="form-control" @bind="_inviteEmail" />
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label">角色</label>
-                                <select class="form-select" @bind="_inviteRole">
-                                    <option value="Editor">Editor</option>
-                                    <option value="Viewer">Viewer</option>
-                                </select>
-                            </div>
-                            <div class="col-md-4">
-                                <button type="button" class="btn btn-outline-primary" @onclick="InviteAsync" disabled="@_busy">发送邀请</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                @if (_confirmDelete)
-                {
-                    <div class="alert alert-warning">
-                        <p>确定删除整个族谱？将同时删除所有成员与关系，且不可恢复。</p>
-                        <button type="button" class="btn btn-danger me-2" @onclick="DeleteConfirmedAsync" disabled="@_busy">确认删除</button>
-                        <button type="button" class="btn btn-secondary" @onclick="() => _confirmDelete = false">取消</button>
-                    </div>
-                }
-                else
-                {
-                    <button type="button" class="btn btn-outline-danger mb-4" @onclick="() => _confirmDelete = true">删除族谱</button>
-                }
-            }
-
-            <div class="card shadow-sm">
-                <div class="card-body">
-                    <h5 class="card-title">协作成员</h5>
-                    @if (_collaborators is null)
-                    {
-                        <p>加载中…</p>
-                    }
-                    else if (_collaborators.Count == 0)
-                    {
-                        <p class="text-muted">暂无记录。</p>
-                    }
-                    else
-                    {
-                        <ul class="list-group list-group-flush">
-                            @foreach (var c in _collaborators)
-                            {
-                                <li class="list-group-item d-flex justify-content-between">
-                                    <span>@c.UserName &lt;@c.Email&gt;</span>
-                                    <span class="badge bg-secondary">@c.Role</span>
-                                </li>
-                            }
-                        </ul>
-                    }
-                </div>
-            </div>
+            <button type="button" class="btn btn-outline-danger mb-4" @onclick="() => _confirmDelete = true">删除整本族谱</button>
         }
-    </Authorized>
-</AuthorizeView>
+    }
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <h5 class="card-title">协作成员</h5>
+            @if (_collaborators is null)
+            {
+                <div class="text-muted small">加载中…</div>
+            }
+            else if (_collaborators.Count == 0)
+            {
+                <p class="text-muted small mb-0">暂无协作记录（若您为创建者且未写入协作表，界面仍可能显示为管理员权限）。</p>
+            }
+            else
+            {
+                <ul class="list-group list-group-flush">
+                    @foreach (var c in _collaborators)
+                    {
+                        <li class="list-group-item d-flex flex-wrap justify-content-between gap-2 align-items-center">
+                            <span>@c.UserName <span class="text-muted">&lt;@c.Email&gt;</span></span>
+                            <span class="badge bg-secondary">@RoleUiText.ToChinese(c.Role)</span>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+    </div>
+}
 
 @code {
     [Parameter] public Guid GenealogyId { get; set; }
@@ -127,11 +149,11 @@
     private Genealogy? _genealogy;
     private List<GenealogyCollaboratorDto>? _collaborators;
     private string? _error;
-    private string? _info;
     private bool _busy;
     private bool _canEdit;
     private bool _canManage;
     private bool _confirmDelete;
+    private string? _myRole;
 
     private string _editTitle = "";
     private string _editSurname = "";
@@ -143,26 +165,30 @@
     protected override async Task OnParametersSetAsync()
     {
         _error = null;
-        _info = null;
         _confirmDelete = false;
-
-        var auth = await AuthState.GetAuthenticationStateAsync();
-        if (auth.User.Identity?.IsAuthenticated != true)
-        {
-            return;
-        }
-
         await LoadAsync();
     }
 
     private async Task LoadAsync()
     {
+        _genealogy = null;
+        _collaborators = null;
+        _myRole = null;
         try
         {
             var baseUri = new Uri(Nav.BaseUri);
-            _genealogy = await Http.GetFromJsonAsync<Genealogy>(new Uri(baseUri, $"api/genealogies/{GenealogyId}"));
+
+            var gResp = await Http.GetAsync(new Uri(baseUri, $"api/genealogies/{GenealogyId}"));
+            if (!gResp.IsSuccessStatusCode)
+            {
+                _error = await ApiUiMessage.FormatAsync(gResp);
+                return;
+            }
+
+            _genealogy = await gResp.Content.ReadFromJsonAsync<Genealogy>(ApiUiMessage.JsonReadOptions);
             if (_genealogy == null)
             {
+                _error = "族谱不存在。";
                 return;
             }
 
@@ -170,18 +196,32 @@
             _editSurname = _genealogy.Surname;
             _editCompiledLocal = _genealogy.CompiledAt?.ToLocalTime();
 
-            var me = await Http.GetFromJsonAsync<MeMembershipDto>(new Uri(baseUri, $"api/genealogies/{GenealogyId}/me"));
-            var role = me?.Role;
-            _canManage = string.Equals(role, "Owner", StringComparison.OrdinalIgnoreCase);
-            _canEdit = _canManage || string.Equals(role, "Editor", StringComparison.OrdinalIgnoreCase);
+            var meResp = await Http.GetAsync(new Uri(baseUri, $"api/genealogies/{GenealogyId}/me"));
+            if (!meResp.IsSuccessStatusCode)
+            {
+                _error = await ApiUiMessage.FormatAsync(meResp);
+                return;
+            }
 
-            _collaborators = await Http.GetFromJsonAsync<List<GenealogyCollaboratorDto>>(
-                new Uri(baseUri, $"api/genealogies/{GenealogyId}/collaborators"));
+            var me = await meResp.Content.ReadFromJsonAsync<MeMembershipDto>(ApiUiMessage.JsonReadOptions);
+            _myRole = me?.Role;
+            _canManage = string.Equals(_myRole, "Owner", StringComparison.OrdinalIgnoreCase);
+            _canEdit = _canManage || string.Equals(_myRole, "Editor", StringComparison.OrdinalIgnoreCase);
+
+            var colResp = await Http.GetAsync(new Uri(baseUri, $"api/genealogies/{GenealogyId}/collaborators"));
+            if (!colResp.IsSuccessStatusCode)
+            {
+                _error = await ApiUiMessage.FormatAsync(colResp);
+                _collaborators = new List<GenealogyCollaboratorDto>();
+                return;
+            }
+
+            _collaborators = await colResp.Content.ReadFromJsonAsync<List<GenealogyCollaboratorDto>>(ApiUiMessage.JsonReadOptions)
+                ?? new List<GenealogyCollaboratorDto>();
         }
         catch (Exception ex)
         {
             _error = "加载失败：" + ex.Message;
-            _genealogy = null;
         }
     }
 
@@ -190,7 +230,6 @@
         if (_busy || !_canEdit) return;
         _busy = true;
         _error = null;
-        _info = null;
         try
         {
             DateTime? utc = _editCompiledLocal.HasValue
@@ -203,11 +242,11 @@
 
             if (!resp.IsSuccessStatusCode)
             {
-                _error = await resp.Content.ReadAsStringAsync();
+                _error = await ApiUiMessage.FormatAsync(resp);
                 return;
             }
 
-            _info = "已保存。";
+            Toasts.ShowSuccess("已保存。");
             await LoadAsync();
         }
         catch (Exception ex)
@@ -223,9 +262,14 @@
     private async Task InviteAsync()
     {
         if (_busy || !_canManage) return;
+        if (string.IsNullOrWhiteSpace(_inviteEmail))
+        {
+            _error = "请填写对方邮箱。";
+            return;
+        }
+
         _busy = true;
         _error = null;
-        _info = null;
         try
         {
             var resp = await Http.PostAsJsonAsync(
@@ -234,12 +278,12 @@
 
             if (!resp.IsSuccessStatusCode)
             {
-                _error = await resp.Content.ReadAsStringAsync();
+                _error = await ApiUiMessage.FormatAsync(resp);
                 return;
             }
 
             _inviteEmail = "";
-            _info = "邀请已发送。";
+            Toasts.ShowSuccess("邀请已发送，对方登录后即可看到本族谱。");
             await LoadAsync();
         }
         catch (Exception ex)
@@ -262,7 +306,7 @@
             var resp = await Http.DeleteAsync(new Uri(new Uri(Nav.BaseUri), $"api/genealogies/{GenealogyId}"));
             if (!resp.IsSuccessStatusCode)
             {
-                _error = await resp.Content.ReadAsStringAsync();
+                _error = await ApiUiMessage.FormatAsync(resp);
                 _confirmDelete = false;
                 return;
             }
@@ -286,4 +330,3 @@
         public string? Role { get; set; }
     }
 }
-

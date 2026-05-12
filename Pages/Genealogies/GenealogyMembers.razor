@@ -1,123 +1,130 @@
 @page "/genealogies/{GenealogyId:guid}/members"
+@attribute [Authorize]
+@using System.Net.Http.Json
+@using Microsoft.JSInterop
 @inject HttpClient Http
 @inject NavigationManager Nav
-@inject AuthenticationStateProvider AuthState
+@inject IJSRuntime JS
+@inject ToastService Toasts
 
-<h3>成员管理</h3>
+<PageTitle>成员管理</PageTitle>
 
-<AuthorizeView>
-    <NotAuthorized>
-        <div class="alert alert-warning">请先<a href="/login">登录</a>。</div>
-    </NotAuthorized>
-    <Authorized>
-        @if (!string.IsNullOrEmpty(_error))
-        {
-            <div class="alert alert-danger">@_error</div>
-        }
-        @if (!string.IsNullOrEmpty(_info))
-        {
-            <div class="alert alert-success">@_info</div>
-        }
+<h3 class="mb-2">成员管理</h3>
 
-        <p class="text-muted mb-3">
-            <a href="/genealogies">← 族谱列表</a>
-            ·
-            <a href="@($"/genealogies/{GenealogyId}")">族谱设置</a>
-        </p>
+@if (!string.IsNullOrEmpty(_error))
+{
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        @_error
+        <button type="button" class="btn-close" @onclick="() => _error = null" aria-label="关闭"></button>
+    </div>
+}
 
-        @if (!_loaded)
-        {
-            <p>加载中…</p>
-        }
-        else if (!_canEdit)
-        {
-            <div class="alert alert-info">您对本族谱为只读（Viewer），无法增删改成员。</div>
-        }
+<p class="text-muted small mb-3">
+    <a href="/genealogies">← 族谱列表</a>
+    <span class="mx-1">·</span>
+    <a href="@($"/genealogies/{GenealogyId}")">族谱设置</a>
+</p>
 
-        @if (_canEdit)
-        {
-            <div class="card shadow-sm mb-4">
-                <div class="card-body">
-                    <h5 class="card-title">@( _editingId is null ? "新增成员" : "编辑成员")</h5>
-                    <div class="row g-2">
-                        <div class="col-md-3">
-                            <label class="form-label">姓名</label>
-                            <input class="form-control" @bind="_formGivenName" />
-                        </div>
-                        <div class="col-md-2">
-                            <label class="form-label">性别</label>
-                            <input class="form-control" @bind="_formGender" placeholder="男/女" />
-                        </div>
-                        <div class="col-md-2">
-                            <label class="form-label">出生年</label>
-                            <input type="number" class="form-control" @bind="_formBirthYear" />
-                        </div>
-                        <div class="col-md-2">
-                            <label class="form-label">去世年</label>
-                            <input type="number" class="form-control" @bind="_formDeathYear" />
-                        </div>
-                        <div class="col-md-12 mt-2">
-                            <label class="form-label">简介</label>
-                            <textarea class="form-control" rows="2" @bind="_formBio"></textarea>
-                        </div>
-                    </div>
-                    <div class="mt-3">
-                        @if (_editingId is null)
-                        {
-                            <button type="button" class="btn btn-primary" @onclick="CreatePersonAsync" disabled="@_busy">添加</button>
-                        }
-                        else
-                        {
-                            <button type="button" class="btn btn-primary me-2" @onclick="SavePersonAsync" disabled="@_busy">保存修改</button>
-                            <button type="button" class="btn btn-secondary" @onclick="CancelEdit" disabled="@_busy">取消</button>
-                        }
-                    </div>
+@if (!_loaded)
+{
+    <div class="d-flex align-items-center gap-2 text-muted my-4">
+        <div class="spinner-border spinner-border-sm" role="status"></div>
+        <span>正在加载…</span>
+    </div>
+}
+else if (!_canEdit)
+{
+    <div class="alert alert-info mb-0">
+        您对本族谱为<strong>只读</strong>权限，无法在此页添加或修改成员。如需编辑，请联系族谱管理员将您设为「可编辑」。
+    </div>
+}
+
+@if (_canEdit)
+{
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h5 class="card-title">@(_editingId is null ? "新增成员" : "编辑成员")</h5>
+            <div class="row g-2">
+                <div class="col-md-3">
+                    <label class="form-label">姓名 <span class="text-danger">*</span></label>
+                    <input class="form-control" @bind="_formGivenName" placeholder="姓名" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">性别</label>
+                    <select class="form-select" @bind="_formGender">
+                        <option value="">未填</option>
+                        <option value="男">男</option>
+                        <option value="女">女</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">出生年</label>
+                    <input type="number" class="form-control" @bind="_formBirthYear" placeholder="可选" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">去世年</label>
+                    <input type="number" class="form-control" @bind="_formDeathYear" placeholder="可选" />
+                </div>
+                <div class="col-md-12 mt-2">
+                    <label class="form-label">简介</label>
+                    <textarea class="form-control" rows="2" @bind="_formBio" placeholder="生平简介（可选）"></textarea>
                 </div>
             </div>
-        }
-
-        @if (_persons is null)
-        {
-            <p>加载成员列表…</p>
-        }
-        else if (_persons.Count == 0)
-        {
-            <p class="text-muted">暂无成员。</p>
-        }
-        else
-        {
-            <div class="table-responsive">
-                <table class="table table-sm table-bordered">
-                    <thead>
-                        <tr>
-                            <th>姓名</th>
-                            <th>性别</th>
-                            <th>生卒</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var p in _persons)
-                        {
-                            <tr class="@(_editingId == p.Id ? "table-primary" : "")">
-                                <td>@p.GivenName</td>
-                                <td>@(p.Gender ?? "—")</td>
-                                <td>@FormatLife(p)</td>
-                                <td>
-                                    @if (_canEdit)
-                                    {
-                                        <button type="button" class="btn btn-sm btn-outline-primary me-1" @onclick="() => StartEdit(p)">编辑</button>
-                                        <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => DeletePersonAsync(p.Id)">删除</button>
-                                    }
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
+            <div class="mt-3">
+                @if (_editingId is null)
+                {
+                    <button type="button" class="btn btn-primary" @onclick="CreatePersonAsync" disabled="@_busy">添加成员</button>
+                }
+                else
+                {
+                    <button type="button" class="btn btn-primary me-2" @onclick="SavePersonAsync" disabled="@_busy">保存修改</button>
+                    <button type="button" class="btn btn-secondary" @onclick="CancelEdit" disabled="@_busy">取消</button>
+                }
             </div>
-        }
-    </Authorized>
-</AuthorizeView>
+        </div>
+    </div>
+}
+
+@if (_persons is null)
+{
+    <p class="text-muted small">加载成员列表…</p>
+}
+else if (_persons.Count == 0)
+{
+    <div class="alert alert-light border">暂无成员。请在上方表单添加第一位成员。</div>
+}
+else
+{
+    <div class="table-responsive shadow-sm rounded">
+        <table class="table table-sm table-bordered align-middle mb-0 bg-white">
+            <thead class="table-light">
+                <tr>
+                    <th>姓名</th>
+                    <th>性别</th>
+                    <th>生卒年</th>
+                    <th class="text-end">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var p in _persons)
+                {
+                    <tr class="@(_editingId == p.Id ? "table-primary" : null)">
+                        <td>@p.GivenName</td>
+                        <td>@(p.Gender ?? "—")</td>
+                        <td class="text-muted small">@FormatLife(p)</td>
+                        <td class="text-end text-nowrap">
+                            @if (_canEdit)
+                            {
+                                <button type="button" class="btn btn-sm btn-outline-primary me-1" @onclick="() => StartEdit(p)">编辑</button>
+                                <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => DeletePersonAsync(p.Id)">删除</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
 
 @code {
     [Parameter] public Guid GenealogyId { get; set; }
@@ -126,7 +133,6 @@
     private bool _loaded;
     private bool _canEdit;
     private string? _error;
-    private string? _info;
     private bool _busy;
 
     private Guid? _editingId;
@@ -139,16 +145,8 @@
     protected override async Task OnParametersSetAsync()
     {
         _error = null;
-        _info = null;
         _editingId = null;
         ClearForm();
-
-        var auth = await AuthState.GetAuthenticationStateAsync();
-        if (auth.User.Identity?.IsAuthenticated != true)
-        {
-            return;
-        }
-
         await LoadRoleAndListAsync();
     }
 
@@ -168,12 +166,29 @@
         try
         {
             var baseUri = new Uri(Nav.BaseUri);
-            var me = await Http.GetFromJsonAsync<MeMembershipDto>(new Uri(baseUri, $"api/genealogies/{GenealogyId}/me"));
+            var meResp = await Http.GetAsync(new Uri(baseUri, $"api/genealogies/{GenealogyId}/me"));
+            if (!meResp.IsSuccessStatusCode)
+            {
+                _error = await ApiUiMessage.FormatAsync(meResp);
+                _persons = new List<Person>();
+                _canEdit = false;
+                return;
+            }
+
+            var me = await meResp.Content.ReadFromJsonAsync<MeMembershipDto>(ApiUiMessage.JsonReadOptions);
             var role = me?.Role;
             _canEdit = string.Equals(role, "Owner", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(role, "Editor", StringComparison.OrdinalIgnoreCase);
 
-            _persons = await Http.GetFromJsonAsync<List<Person>>(new Uri(baseUri, $"api/persons/byGenealogy/{GenealogyId}"));
+            var listResp = await Http.GetAsync(new Uri(baseUri, $"api/persons/byGenealogy/{GenealogyId}"));
+            if (!listResp.IsSuccessStatusCode)
+            {
+                _error = await ApiUiMessage.FormatAsync(listResp);
+                _persons = new List<Person>();
+                return;
+            }
+
+            _persons = await listResp.Content.ReadFromJsonAsync<List<Person>>(ApiUiMessage.JsonReadOptions) ?? new List<Person>();
         }
         catch (Exception ex)
         {
@@ -215,9 +230,14 @@
     private async Task CreatePersonAsync()
     {
         if (_busy || !_canEdit) return;
+        if (string.IsNullOrWhiteSpace(_formGivenName))
+        {
+            _error = "请填写姓名。";
+            return;
+        }
+
         _busy = true;
         _error = null;
-        _info = null;
         try
         {
             var model = new Person
@@ -233,11 +253,11 @@
             var resp = await Http.PostAsJsonAsync(new Uri(new Uri(Nav.BaseUri), "api/persons"), model);
             if (!resp.IsSuccessStatusCode)
             {
-                _error = await resp.Content.ReadAsStringAsync();
+                _error = await ApiUiMessage.FormatAsync(resp);
                 return;
             }
 
-            _info = "已添加成员。";
+            Toasts.ShowSuccess("已添加成员。");
             ClearForm();
             await LoadRoleAndListAsync();
         }
@@ -254,9 +274,14 @@
     private async Task SavePersonAsync()
     {
         if (_busy || !_canEdit || _editingId is null) return;
+        if (string.IsNullOrWhiteSpace(_formGivenName))
+        {
+            _error = "请填写姓名。";
+            return;
+        }
+
         _busy = true;
         _error = null;
-        _info = null;
         try
         {
             var dto = new UpdatePersonDto(
@@ -272,11 +297,11 @@
 
             if (!resp.IsSuccessStatusCode)
             {
-                _error = await resp.Content.ReadAsStringAsync();
+                _error = await ApiUiMessage.FormatAsync(resp);
                 return;
             }
 
-            _info = "已保存。";
+            Toasts.ShowSuccess("已保存。");
             CancelEdit();
             await LoadRoleAndListAsync();
         }
@@ -293,19 +318,24 @@
     private async Task DeletePersonAsync(Guid id)
     {
         if (_busy || !_canEdit) return;
+        var ok = await JS.InvokeAsync<bool>("confirm", "确定删除该成员？与其相关父母子女、婚姻记录将一并删除，且不可恢复。");
+        if (!ok)
+        {
+            return;
+        }
+
         _busy = true;
         _error = null;
-        _info = null;
         try
         {
             var resp = await Http.DeleteAsync(new Uri(new Uri(Nav.BaseUri), $"api/persons/{id}"));
             if (!resp.IsSuccessStatusCode)
             {
-                _error = await resp.Content.ReadAsStringAsync();
+                _error = await ApiUiMessage.FormatAsync(resp);
                 return;
             }
 
-            _info = "已删除。";
+            Toasts.ShowSuccess("已删除。");
             if (_editingId == id)
             {
                 CancelEdit();

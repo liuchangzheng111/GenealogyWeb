@@ -1,18 +1,39 @@
 @*
-    应用根：为整棵组件树提供 CascadingAuthenticationState，使各页 AuthorizeView 与 Cookie 登录态一致。
-    Router 发现路由则渲染 RouteView（默认布局 MainLayout）。
+    应用根：CascadingAuthenticationState + AuthorizeRouteView；需登录的页面请使用 [Authorize]，未登录时跳转登录并携带 returnUrl。
 *@
 @using Microsoft.AspNetCore.Components.Routing
 @using Microsoft.AspNetCore.Components.Authorization
+@using GenealogyWeb.Shared
 @layout MainLayout
 
 <CascadingAuthenticationState>
     <Router AppAssembly="typeof(Program).Assembly">
         <Found Context="routeData">
-            <RouteView RouteData="routeData" DefaultLayout="typeof(MainLayout)" />
+            <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(MainLayout)">
+                <NotAuthorized Context="authState">
+                    @if (authState.User.Identity?.IsAuthenticated == true)
+                    {
+                        <div class="container py-5">
+                            <div class="alert alert-warning shadow-sm">
+                                <strong>无权访问</strong>
+                                <p class="mb-2 small mt-2">您已登录，但无权打开此页面（例如需要族谱管理员权限）。</p>
+                                <a class="btn btn-sm btn-outline-primary" href="/">返回首页</a>
+                                <a class="btn btn-sm btn-outline-secondary ms-2" href="/genealogies">族谱管理</a>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <RedirectToLogin />
+                    }
+                </NotAuthorized>
+            </AuthorizeRouteView>
         </Found>
         <NotFound>
-            <p>Not found</p>
+            <div class="container py-5 text-center">
+                <h1 class="h4">页面不存在</h1>
+                <p class="text-muted">请检查网址，或返回<a href="/">首页</a>。</p>
+            </div>
         </NotFound>
     </Router>
 </CascadingAuthenticationState>

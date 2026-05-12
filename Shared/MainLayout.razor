@@ -5,35 +5,94 @@
 @namespace GenealogyWeb
 @inherits LayoutComponentBase
 @using Microsoft.AspNetCore.Components.Authorization
+@using GenealogyWeb.Shared
+@inject NavigationManager Nav
 
 <div class="container-fluid">
     <div class="row">
         <div class="col-12">
-            <nav class="navbar navbar-expand-lg navbar-light bg-light">
-                <a class="navbar-brand" href="/">GenealogyWeb</a>
-                <AuthorizeView>
-                    <Authorized>
-                        <a class="nav-link d-inline-block me-3" href="/genealogies">族谱管理</a>
-                    </Authorized>
-                </AuthorizeView>
-                <div class="ms-auto d-flex align-items-center gap-2">
-                    <AuthorizeView>
-                        <Authorized Context="auth">
-                            <span class="navbar-text me-2">@auth.User.Identity?.Name</span>
-                            <a class="btn btn-outline-secondary" href="/logout">退出</a>
-                        </Authorized>
-                        <NotAuthorized>
-                            <a class="btn btn-outline-primary" href="/login">登录</a>
-                            <a class="btn btn-outline-secondary" href="/register">注册</a>
-                        </NotAuthorized>
-                    </AuthorizeView>
+            <nav class="navbar navbar-expand-md navbar-light bg-light border-bottom shadow-sm">
+                <a class="navbar-brand fw-semibold" href="/">GenealogyWeb</a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMain" aria-controls="navMain" aria-expanded="false" aria-label="展开导航">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="navMain">
+                    <ul class="navbar-nav me-auto mb-2 mb-md-0">
+                        <AuthorizeView>
+                            <Authorized>
+                                <li class="nav-item">
+                                    <a class="nav-link" href="/">首页</a>
+                                </li>
+                                <li class="nav-item">
+                                    <a class="nav-link" href="/genealogies">族谱管理</a>
+                                </li>
+                            </Authorized>
+                        </AuthorizeView>
+                    </ul>
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <AuthorizeView>
+                            <Authorized Context="auth">
+                                <span class="navbar-text small text-muted me-2">@auth.User.Identity?.Name</span>
+                                <a class="btn btn-outline-secondary btn-sm" href="/logout">退出</a>
+                            </Authorized>
+                            <NotAuthorized>
+                                <a class="btn btn-outline-primary btn-sm" href="@LoginHref">登录</a>
+                                <a class="btn btn-outline-secondary btn-sm" href="@RegisterHref">注册</a>
+                            </NotAuthorized>
+                        </AuthorizeView>
+                    </div>
                 </div>
             </nav>
         </div>
     </div>
-    <div class="row mt-3">
+    <div class="row mt-3 mb-5">
         <div class="col-12">
             @Body
         </div>
     </div>
+    <ToastHost />
+    <footer class="row border-top py-3 mt-auto small text-muted">
+        <div class="col-12 text-center">
+            寻根溯源 · 族谱管理原型 · 演示账号见首页说明
+        </div>
+    </footer>
 </div>
+
+@code {
+    private string CurrentPathAndQuery
+    {
+        get
+        {
+            var uri = Nav.ToAbsoluteUri(Nav.Uri);
+            return string.IsNullOrEmpty(uri.PathAndQuery) ? "/" : uri.PathAndQuery;
+        }
+    }
+
+    private string LoginHref
+    {
+        get
+        {
+            var p = CurrentPathAndQuery;
+            if (!ReturnUrlHelper.IsSafeLocalPath(p) || p.StartsWith("/login", StringComparison.OrdinalIgnoreCase))
+            {
+                return "/login";
+            }
+
+            return "/login?returnUrl=" + Uri.EscapeDataString(p);
+        }
+    }
+
+    private string RegisterHref
+    {
+        get
+        {
+            var p = CurrentPathAndQuery;
+            if (!ReturnUrlHelper.IsSafeLocalPath(p) || p.StartsWith("/register", StringComparison.OrdinalIgnoreCase))
+            {
+                return "/register";
+            }
+
+            return "/register?returnUrl=" + Uri.EscapeDataString(p);
+        }
+    }
+}

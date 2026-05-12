@@ -15,7 +15,9 @@
 - **按邮箱邀请**已注册用户（`Editor` / `Viewer`，仅 Owner）
 - Dashboard 汇总（仅统计有权访问的族谱内成员）
 - MySQL 8 数据库（EF Core **Migrations** + 启动时 `Migrate()`）
-- Blazor 页面：`/genealogies`、族谱设置、成员管理
+- Blazor 页面：`/genealogies`、族谱设置、成员管理（上述页面需登录，未登录会跳转 `/login?returnUrl=…`）
+- 登录后 **returnUrl** 回跳（仅允许站内以 `/` 开头的路径，防开放重定向）
+- 操作成功 **Toast** 轻提示（右下角自动消失）
 
 ## 技术栈
 
@@ -44,7 +46,7 @@ http://localhost:5000
 
 ## 页面说明
 
-- `/`：Dashboard，显示当前登录用户和族谱列表入口
+- `/`：Dashboard；未登录可浏览提示，树预览需登录；支持选择预览哪一本族谱
 - `/genealogies`：族谱列表与新建
 - `/genealogies/{id}`：族谱设置（编辑、邀请、删除）
 - `/genealogies/{id}/members`：成员增删改

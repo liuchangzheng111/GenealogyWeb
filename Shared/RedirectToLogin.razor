@@ -1,0 +1,18 @@
+@namespace GenealogyWeb.Shared
+@inject NavigationManager Nav
+
+@code {
+    /// <summary>将当前路径作为 returnUrl 带到登录页（仅允许站内相对路径）。</summary>
+    protected override void OnInitialized()
+    {
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        var pathAndQuery = string.IsNullOrEmpty(uri.PathAndQuery) ? "/" : uri.PathAndQuery;
+        if (!ReturnUrlHelper.IsSafeLocalPath(pathAndQuery))
+        {
+            Nav.NavigateTo("/login", forceLoad: true);
+            return;
+        }
+
+        Nav.NavigateTo($"/login?returnUrl={Uri.EscapeDataString(pathAndQuery)}", forceLoad: true);
+    }
+}

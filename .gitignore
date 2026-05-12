@@ -6,6 +6,7 @@
 out/
 publish/
 _build_verify/
+_build_verify_out/
 
 # Visual Studio / MSBuild
 .vs/

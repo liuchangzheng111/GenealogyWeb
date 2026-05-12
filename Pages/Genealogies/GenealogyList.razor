@@ -1,79 +1,91 @@
 @page "/genealogies"
+@attribute [Authorize]
+@using System.Net.Http.Json
 @inject HttpClient Http
 @inject NavigationManager Nav
-@inject AuthenticationStateProvider AuthState
+@inject ToastService Toasts
 
-<h3>族谱管理</h3>
+<PageTitle>族谱管理</PageTitle>
 
-<AuthorizeView>
-    <NotAuthorized>
-        <div class="alert alert-warning">请先<a href="/login">登录</a>。</div>
-    </NotAuthorized>
-    <Authorized>
-        @if (!string.IsNullOrEmpty(_error))
-        {
-            <div class="alert alert-danger">@_error</div>
-        }
+<h3 class="mb-3">族谱管理</h3>
 
-        <div class="card shadow-sm mb-4">
-            <div class="card-body">
-                <h5 class="card-title">新建族谱</h5>
-                <div class="row g-2 align-items-end">
-                    <div class="col-md-4">
-                        <label class="form-label">谱名</label>
-                        <input class="form-control" @bind="_newTitle" />
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label">姓氏</label>
-                        <input class="form-control" @bind="_newSurname" />
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label d-block">&nbsp;</label>
-                        <button type="button" class="btn btn-primary w-100" @onclick="CreateAsync" disabled="@_busy">创建</button>
-                    </div>
-                </div>
+@if (!string.IsNullOrEmpty(_error))
+{
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        @_error
+        <button type="button" class="btn-close" @onclick="() => _error = null" aria-label="关闭"></button>
+    </div>
+}
+
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <h5 class="card-title">新建族谱</h5>
+        <p class="text-muted small mb-3">创建后您为族谱管理员（Owner），可在设置页邀请他人协作。</p>
+        <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label">谱名 <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="_newTitle" placeholder="例如：张氏族谱" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">姓氏 <span class="text-danger">*</span></label>
+                <input class="form-control" @bind="_newSurname" placeholder="例如：张" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label d-block">&nbsp;</label>
+                <button type="button" class="btn btn-primary w-100" @onclick="CreateAsync" disabled="@_busy">
+                    @if (_busy)
+                    {
+                        <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                    }
+                    创建
+                </button>
             </div>
         </div>
+    </div>
+</div>
 
-        @if (_items is null)
-        {
-            <p>加载中…</p>
-        }
-        else if (_items.Count == 0)
-        {
-            <p class="text-muted">暂无族谱，请先创建。</p>
-        }
-        else
-        {
-            <div class="table-responsive">
-                <table class="table table-hover">
-                    <thead>
-                        <tr>
-                            <th>谱名</th>
-                            <th>姓氏</th>
-                            <th>修谱时间</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var g in _items)
-                        {
-                            <tr>
-                                <td>@g.Title</td>
-                                <td>@g.Surname</td>
-                                <td>@(g.CompiledAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")</td>
-                                <td>
-                                    <a class="btn btn-sm btn-outline-primary" href="@($"/genealogies/{g.Id}")">管理</a>
-                                    <a class="btn btn-sm btn-outline-secondary" href="@($"/genealogies/{g.Id}/members")">成员</a>
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
-        }
-    </Authorized>
-</AuthorizeView>
+@if (_items is null)
+{
+    <div class="d-flex align-items-center gap-2 text-muted my-4">
+        <div class="spinner-border spinner-border-sm" role="status"></div>
+        <span>正在加载族谱列表…</span>
+    </div>
+}
+else if (_items.Count == 0)
+{
+    <div class="alert alert-light border">
+        暂无族谱。创建第一本族谱后，可在「成员」页添加人物与父母子女关系，首页树预览将显示数据。
+    </div>
+}
+else
+{
+    <div class="table-responsive shadow-sm rounded">
+        <table class="table table-hover align-middle mb-0 bg-white">
+            <thead class="table-light">
+                <tr>
+                    <th scope="col">谱名</th>
+                    <th scope="col">姓氏</th>
+                    <th scope="col">修谱时间</th>
+                    <th scope="col" class="text-end">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var g in _items)
+                {
+                    <tr>
+                        <td><strong>@g.Title</strong></td>
+                        <td>@g.Surname</td>
+                        <td class="text-muted small">@(g.CompiledAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")</td>
+                        <td class="text-end text-nowrap">
+                            <a class="btn btn-sm btn-outline-primary" href="@($"/genealogies/{g.Id}")">设置</a>
+                            <a class="btn btn-sm btn-outline-secondary" href="@($"/genealogies/{g.Id}/members")">成员</a>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
 
 @code {
     private List<Genealogy>? _items;
@@ -84,12 +96,6 @@
 
     protected override async Task OnInitializedAsync()
     {
-        var auth = await AuthState.GetAuthenticationStateAsync();
-        if (auth.User.Identity?.IsAuthenticated != true)
-        {
-            return;
-        }
-
         await ReloadAsync();
     }
 
@@ -98,7 +104,15 @@
         _error = null;
         try
         {
-            _items = await Http.GetFromJsonAsync<List<Genealogy>>(new Uri(new Uri(Nav.BaseUri), "api/genealogies"));
+            var resp = await Http.GetAsync(new Uri(new Uri(Nav.BaseUri), "api/genealogies"));
+            if (!resp.IsSuccessStatusCode)
+            {
+                _error = await ApiUiMessage.FormatAsync(resp);
+                _items = new List<Genealogy>();
+                return;
+            }
+
+            _items = await resp.Content.ReadFromJsonAsync<List<Genealogy>>(ApiUiMessage.JsonReadOptions) ?? new List<Genealogy>();
         }
         catch (Exception ex)
         {
@@ -110,6 +124,12 @@
     private async Task CreateAsync()
     {
         if (_busy) return;
+        if (string.IsNullOrWhiteSpace(_newTitle) || string.IsNullOrWhiteSpace(_newSurname))
+        {
+            _error = "请填写谱名与姓氏。";
+            return;
+        }
+
         _busy = true;
         _error = null;
         try
@@ -120,10 +140,11 @@
 
             if (!resp.IsSuccessStatusCode)
             {
-                _error = await resp.Content.ReadAsStringAsync();
+                _error = await ApiUiMessage.FormatAsync(resp);
                 return;
             }
 
+            Toasts.ShowSuccess("族谱已创建。");
             _newTitle = "";
             _newSurname = "";
             await ReloadAsync();

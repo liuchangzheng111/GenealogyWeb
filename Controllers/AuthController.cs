@@ -35,10 +35,10 @@ namespace GenealogyWeb.Controllers
         public async Task<IActionResult> Register([FromBody] RegisterDto dto)
         {
             if (string.IsNullOrWhiteSpace(dto.Email) || string.IsNullOrWhiteSpace(dto.Password))
-                return BadRequest("Email and password required.");
+                return BadRequest("请填写邮箱和密码。");
 
             var exists = await _db.Users.AnyAsync(u => u.Email == dto.Email);
-            if (exists) return Conflict("Email already registered.");
+            if (exists) return Conflict(new { message = "该邮箱已被注册。" });
 
             var user = new User
             {

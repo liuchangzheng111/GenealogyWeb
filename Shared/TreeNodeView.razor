@@ -4,7 +4,7 @@
 @using System.Linq
 
 <li class="mb-2">
-    <div>
+    <div title="@BioTooltip">
         <strong>@Node.Name</strong>
         <span class="text-muted">@(Node.Gender ?? "未知")</span>
         <span class="text-muted">@((Node.BirthYear.HasValue ? $"，{Node.BirthYear}年出生" : string.Empty))</span>
@@ -22,7 +22,20 @@
 </li>
 
 @code {
-    // 由父级传入的当前树节点（勿在子组件内修改 Children 集合结构）
     [Parameter]
     public GenealogyWeb.Controllers.TreeNodeDto Node { get; set; } = null!;
+
+    private string? BioTooltip
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(Node.Bio))
+            {
+                return null;
+            }
+
+            var t = Node.Bio.Trim();
+            return t.Length <= 280 ? t : t[..280] + "…";
+        }
+    }
 }

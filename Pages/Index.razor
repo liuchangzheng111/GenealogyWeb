@@ -1,102 +1,148 @@
 @*
-    首页 Dashboard：已登录时通过注入的 HttpClient（GenealogyApi + Cookie 转发）拉取 summary、族谱列表与首本族谱树。
-    未登录时不调用受保护 API，避免 401 噪声。
+    首页 Dashboard：已登录时拉取 summary、族谱列表；族谱树可按下拉选择预览对象。
 *@
 @page "/"
+@using System.Net.Http.Json
 @using Microsoft.AspNetCore.Components.Authorization
 @using GenealogyWeb.Controllers
 @inject HttpClient Http
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 
-<h3>Dashboard</h3>
+<PageTitle>首页</PageTitle>
+
+<h3 class="mb-3">Dashboard</h3>
 
 <AuthorizeView>
     <Authorized Context="authState">
-        <div class="alert alert-success mt-2">
-            当前登录用户：<strong>@authState.User.Identity?.Name</strong>
-            ，邮箱：<strong>@authState.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value</strong>
-            <span class="ms-2"><a href="/genealogies">进入族谱管理</a></span>
+        <div class="alert alert-success mt-2 d-flex flex-wrap align-items-center gap-2">
+            <span>
+                当前登录用户：<strong>@authState.User.Identity?.Name</strong>
+                ，邮箱：<strong>@authState.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value</strong>
+            </span>
+            <a class="btn btn-sm btn-outline-success" href="/genealogies">进入族谱管理</a>
         </div>
     </Authorized>
     <NotAuthorized>
         <div class="alert alert-secondary mt-2">
-            未登录。请<a href="/login">登录</a>后查看与您相关的族谱与统计（示例数据绑定演示账号 <code>demo@genealogy.local</code>）。
+            未登录。请<a href="/login?returnUrl=%2F" class="alert-link">登录</a>后查看与您相关的族谱与统计。
+            演示数据可使用 <code>demo@genealogy.local</code> / <code>Demo123!</code>。
         </div>
     </NotAuthorized>
 </AuthorizeView>
 
 <AuthorizeView>
     <Authorized>
-        <div class="row mt-3">
-            <div class="col-md-4 mb-3">
-                <div class="card shadow-sm">
-                    <div class="card-body">
-                        <h5 class="card-title">族谱数量</h5>
-                        <p class="display-6 mb-0">@summary?.GenealogyCount</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4 mb-3">
-                <div class="card shadow-sm">
-                    <div class="card-body">
-                        <h5 class="card-title">成员总数</h5>
-                        <p class="display-6 mb-0">@summary?.TotalMembers</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4 mb-3">
-                <div class="card shadow-sm">
-                    <div class="card-body">
-                        <h5 class="card-title">男女比例</h5>
-                        <p class="mb-1">男：@summary?.MaleCount (@summary?.MaleRatio%)</p>
-                        <p class="mb-0">女：@summary?.FemaleCount (@summary?.FemaleRatio%)</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <p class="mt-2">登录后可查看您有权访问的族谱；演示环境可使用种子账号查看「张氏族谱」示例。</p>
-
-        <div class="card shadow-sm mt-4">
-            <div class="card-body">
-                <h5 class="card-title">族谱树预览</h5>
-                <p class="text-muted mb-2">展示您有权访问的第一个族谱的一条根祖先分支。</p>
-
-                @if (treeRoots is null)
-                {
-                    <div>正在加载族谱树...</div>
-                }
-                else if (treeRoots.Count == 0)
-                {
-                    <div>暂无可展示的族谱树。</div>
-                }
-                else
-                {
-                    <ul class="list-unstyled">
-                        @foreach (var root in treeRoots)
-                        {
-                            <TreeNodeView Node="root" />
-                        }
-                    </ul>
-                }
-            </div>
-        </div>
-
-        <button class="btn btn-primary" @onclick="LoadGenealogies">加载族谱</button>
-
-        @if (genealogies != null)
+        @if (!string.IsNullOrEmpty(_dashboardError))
         {
-            <ul class="mt-3">
-                @foreach (var g in genealogies)
-                {
-                    <li>@g.Title (@g.Surname) - @g.Id</li>
-                }
-            </ul>
+            <div class="alert alert-danger mt-3" role="alert">
+                @_dashboardError
+                <button type="button" class="btn btn-sm btn-outline-danger ms-2" @onclick="RetryLoadAsync">重试</button>
+            </div>
+        }
+
+        @if (_isLoadingDashboard)
+        {
+            <div class="d-flex align-items-center gap-2 my-4 text-muted">
+                <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+                <span>正在加载统计数据与族谱树…</span>
+            </div>
+        }
+        else if (string.IsNullOrEmpty(_dashboardError))
+        {
+            <div class="row mt-3">
+                <div class="col-md-4 mb-3">
+                    <div class="card shadow-sm h-100">
+                        <div class="card-body">
+                            <h5 class="card-title text-muted small text-uppercase">族谱数量</h5>
+                            <p class="display-6 mb-0">@summary?.GenealogyCount</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <div class="card shadow-sm h-100">
+                        <div class="card-body">
+                            <h5 class="card-title text-muted small text-uppercase">成员总数</h5>
+                            <p class="display-6 mb-0">@summary?.TotalMembers</p>
+                            <p class="small text-muted mb-0 mt-1">仅统计您有权访问的族谱</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <div class="card shadow-sm h-100">
+                        <div class="card-body">
+                            <h5 class="card-title text-muted small text-uppercase">男女比例</h5>
+                            <p class="mb-1">男：@summary?.MaleCount（@summary?.MaleRatio%）</p>
+                            <p class="mb-0">女：@summary?.FemaleCount（@summary?.FemaleRatio%）</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card shadow-sm mt-4">
+                <div class="card-body">
+                    <h5 class="card-title">族谱树预览</h5>
+                    <p class="text-muted small mb-3">选择要预览的族谱；展示该谱一条根祖先分支（数据成环时可能截断子树）。</p>
+
+                    @if (genealogies is { Count: > 0 })
+                    {
+                        <div class="row g-2 align-items-end mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label small text-muted mb-1" for="dash-tree-gid">预览族谱</label>
+                                <select id="dash-tree-gid" class="form-select form-select-sm" value="@(_selectedTreeGenealogyId?.ToString() ?? "")" @onchange="OnTreeGenealogyChanged">
+                                    @foreach (var g in genealogies)
+                                    {
+                                        <option value="@g.Id">@g.Title（@g.Surname）</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="col-md-6 text-md-end">
+                                <button type="button" class="btn btn-outline-primary btn-sm mt-2 mt-md-0" @onclick="RetryLoadAsync" disabled="@_isLoadingDashboard">刷新全部</button>
+                            </div>
+                        </div>
+                    }
+
+                    @if (_loadingTree)
+                    {
+                        <div class="d-flex align-items-center gap-2 text-muted py-3">
+                            <div class="spinner-border spinner-border-sm" role="status"></div>
+                            <span>正在加载树…</span>
+                        </div>
+                    }
+                    else if (treeRoots is null)
+                    {
+                        <div class="text-muted">暂无树数据。</div>
+                    }
+                    else if (treeRoots.Count == 0)
+                    {
+                        <div class="alert alert-light border mb-0">暂无可展示的族谱树。可在「族谱管理」中添加成员与父母子女关系。</div>
+                    }
+                    else
+                    {
+                        <ul class="list-unstyled mb-0">
+                            @foreach (var root in treeRoots)
+                            {
+                                <TreeNodeView Node="root" />
+                            }
+                        </ul>
+                    }
+                </div>
+            </div>
+
+            @if (genealogies is { Count: > 0 })
+            {
+                <p class="small text-muted mt-3 mb-0">
+                    快速入口：
+                    @foreach (var g in genealogies)
+                    {
+                        <a class="me-2" href="@($"/genealogies/{g.Id}/members")">@g.Title 成员</a>
+                    }
+                </p>
+            }
         }
     </Authorized>
     <NotAuthorized>
-        <div class="text-muted small mt-2">登录后将显示统计与族谱树。</div>
+        <div class="text-muted small mt-3">登录后将显示统计与族谱树。</div>
     </NotAuthorized>
 </AuthorizeView>
 
@@ -105,10 +151,13 @@
     private DashboardSummaryDto? summary;
     private List<TreeNodeDto>? treeRoots;
 
-    // 与 GET /api/genealogies 返回 JSON 对齐的轻量 DTO
+    private string? _dashboardError;
+    private bool _isLoadingDashboard;
+    private bool _loadingTree;
+    private Guid? _selectedTreeGenealogyId;
+
     private record GenealogyDto(Guid Id, string Title, string Surname);
 
-    // 与 GET /api/dashboard/summary 返回 JSON 对齐
     private record DashboardSummaryDto(int GenealogyCount, int TotalMembers, int MaleCount, int FemaleCount, double MaleRatio, double FemaleRatio);
 
     protected override async Task OnInitializedAsync()
@@ -125,36 +174,113 @@
         await LoadDashboardAsync();
     }
 
-    private async Task LoadDashboardAsync()
-    {
-        summary = await Http.GetFromJsonAsync<DashboardSummaryDto>(new Uri(new Uri(Nav.BaseUri), "api/dashboard/summary"));
-        genealogies = await Http.GetFromJsonAsync<List<GenealogyDto>>(new Uri(new Uri(Nav.BaseUri), "api/genealogies"));
+    private Task RetryLoadAsync() => LoadDashboardAsync();
 
-        if (genealogies != null && genealogies.Count > 0)
-        {
-            treeRoots = await Http.GetFromJsonAsync<List<TreeNodeDto>>(
-                new Uri(new Uri(Nav.BaseUri), $"api/genealogies/{genealogies[0].Id}/tree"));
-        }
-        else
-        {
-            treeRoots = new List<TreeNodeDto>();
-        }
-    }
-
-    private async Task LoadGenealogies()
+    private async Task OnTreeGenealogyChanged(ChangeEventArgs e)
     {
-        var auth = await AuthState.GetAuthenticationStateAsync();
-        if (auth.User.Identity?.IsAuthenticated != true)
+        if (!Guid.TryParse(e.Value?.ToString(), out var id))
         {
             return;
         }
 
-        genealogies = await Http.GetFromJsonAsync<List<GenealogyDto>>(new Uri(new Uri(Nav.BaseUri), "api/genealogies"));
+        _selectedTreeGenealogyId = id;
+        await LoadTreeOnlyAsync(showTreeSpinner: true);
+    }
 
-        if (genealogies != null && genealogies.Count > 0)
+    private async Task LoadDashboardAsync()
+    {
+        _dashboardError = null;
+        _isLoadingDashboard = true;
+        try
         {
-            treeRoots = await Http.GetFromJsonAsync<List<TreeNodeDto>>(
-                new Uri(new Uri(Nav.BaseUri), $"api/genealogies/{genealogies[0].Id}/tree"));
+            var baseUri = new Uri(Nav.BaseUri);
+
+            var sumResp = await Http.GetAsync(new Uri(baseUri, "api/dashboard/summary"));
+            if (!sumResp.IsSuccessStatusCode)
+            {
+                _dashboardError = await ApiUiMessage.FormatAsync(sumResp);
+                summary = null;
+                genealogies = null;
+                treeRoots = null;
+                return;
+            }
+
+            summary = await sumResp.Content.ReadFromJsonAsync<DashboardSummaryDto>(ApiUiMessage.JsonReadOptions);
+            var gResp = await Http.GetAsync(new Uri(baseUri, "api/genealogies"));
+            if (!gResp.IsSuccessStatusCode)
+            {
+                _dashboardError = await ApiUiMessage.FormatAsync(gResp);
+                genealogies = null;
+                treeRoots = new List<TreeNodeDto>();
+                return;
+            }
+
+            genealogies = await gResp.Content.ReadFromJsonAsync<List<GenealogyDto>>(ApiUiMessage.JsonReadOptions) ?? new List<GenealogyDto>();
+
+            if (genealogies.Count > 0)
+            {
+                if (!_selectedTreeGenealogyId.HasValue || genealogies.All(g => g.Id != _selectedTreeGenealogyId))
+                {
+                    _selectedTreeGenealogyId = genealogies[0].Id;
+                }
+
+                await LoadTreeOnlyAsync(showTreeSpinner: false);
+            }
+            else
+            {
+                _selectedTreeGenealogyId = null;
+                treeRoots = new List<TreeNodeDto>();
+            }
+        }
+        catch (Exception ex)
+        {
+            _dashboardError = "加载失败：" + ex.Message;
+            genealogies ??= new List<GenealogyDto>();
+            treeRoots ??= new List<TreeNodeDto>();
+        }
+        finally
+        {
+            _isLoadingDashboard = false;
+        }
+    }
+
+    private async Task LoadTreeOnlyAsync(bool showTreeSpinner = true)
+    {
+        if (!_selectedTreeGenealogyId.HasValue)
+        {
+            treeRoots = new List<TreeNodeDto>();
+            return;
+        }
+
+        if (showTreeSpinner)
+        {
+            _loadingTree = true;
+        }
+
+        try
+        {
+            var baseUri = new Uri(Nav.BaseUri);
+            var tResp = await Http.GetAsync(new Uri(baseUri, $"api/genealogies/{_selectedTreeGenealogyId.Value}/tree"));
+            if (!tResp.IsSuccessStatusCode)
+            {
+                _dashboardError = await ApiUiMessage.FormatAsync(tResp);
+                treeRoots = new List<TreeNodeDto>();
+                return;
+            }
+
+            treeRoots = await tResp.Content.ReadFromJsonAsync<List<TreeNodeDto>>(ApiUiMessage.JsonReadOptions) ?? new List<TreeNodeDto>();
+        }
+        catch (Exception ex)
+        {
+            _dashboardError = "加载族谱树失败：" + ex.Message;
+            treeRoots = new List<TreeNodeDto>();
+        }
+        finally
+        {
+            if (showTreeSpinner)
+            {
+                _loadingTree = false;
+            }
         }
     }
 }
