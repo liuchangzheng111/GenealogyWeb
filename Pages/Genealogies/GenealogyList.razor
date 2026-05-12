@@ -7,6 +7,10 @@
 
 <PageTitle>族谱管理</PageTitle>
 
+<div class="d-flex flex-wrap gap-2 mb-2">
+    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="BackToDashboard">返回首页</button>
+</div>
+
 <h3 class="mb-3">族谱管理</h3>
 
 @if (!string.IsNullOrEmpty(_error))
@@ -98,6 +102,8 @@ else
     {
         await ReloadAsync();
     }
+
+    private void BackToDashboard() => Nav.NavigateTo("/");
 
     private async Task ReloadAsync()
     {

@@ -19,11 +19,11 @@
     </div>
 }
 
-<p class="text-muted small mb-3">
-    <a href="/genealogies">← 族谱列表</a>
-    <span class="mx-1">·</span>
-    <a href="@($"/genealogies/{GenealogyId}")">族谱设置</a>
-</p>
+<div class="d-flex flex-wrap gap-2 mb-3">
+    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="BackToDashboard">返回首页</button>
+    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="BackToGenealogies">返回族谱列表</button>
+    <a class="btn btn-outline-primary btn-sm" href="@($"/genealogies/{GenealogyId}")">族谱设置</a>
+</div>
 
 @if (!_loaded)
 {
@@ -44,6 +44,7 @@ else if (!_canEdit)
     <div class="card shadow-sm mb-4">
         <div class="card-body">
             <h5 class="card-title">@(_editingId is null ? "新增成员" : "编辑成员")</h5>
+            <p class="text-muted small">新增时可选择配偶、父亲、母亲（须为本族谱已有成员）；保存后写入婚姻与父母子女关系。</p>
             <div class="row g-2">
                 <div class="col-md-3">
                     <label class="form-label">姓名 <span class="text-danger">*</span></label>
@@ -69,6 +70,21 @@ else if (!_canEdit)
                     <label class="form-label">简介</label>
                     <textarea class="form-control" rows="2" @bind="_formBio" placeholder="生平简介（可选）"></textarea>
                 </div>
+                @if (_editingId is null)
+                {
+                    <div class="col-md-6 mt-2">
+                        <label class="form-label">配偶</label>
+                        @RenderCompactSearchBox("配偶", _spouseQuery, GetSpouseCandidates(), _formSpouseId, SetSpouseSelection, ClearSpouseSelection, SetSpouseOpen, _isSpouseOpen, SetSpouseQuery)
+                    </div>
+                    <div class="col-md-6 mt-2">
+                        <label class="form-label">父亲</label>
+                        @RenderCompactSearchBox("父亲", _fatherQuery, GetFatherCandidates(), _formFatherId, SetFatherSelection, ClearFatherSelection, SetFatherOpen, _isFatherOpen, SetFatherQuery)
+                    </div>
+                    <div class="col-md-6 mt-2">
+                        <label class="form-label">母亲</label>
+                        @RenderCompactSearchBox("母亲", _motherQuery, GetMotherCandidates(), _formMotherId, SetMotherSelection, ClearMotherSelection, SetMotherOpen, _isMotherOpen, SetMotherQuery)
+                    </div>
+                }
             </div>
             <div class="mt-3">
                 @if (_editingId is null)
@@ -141,6 +157,15 @@ else
     private int? _formBirthYear;
     private int? _formDeathYear;
     private string _formBio = "";
+    private string _formSpouseId = "";
+    private string _formFatherId = "";
+    private string _formMotherId = "";
+    private string _spouseQuery = "";
+    private string _fatherQuery = "";
+    private string _motherQuery = "";
+    private bool _isSpouseOpen;
+    private bool _isFatherOpen;
+    private bool _isMotherOpen;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -209,6 +234,15 @@ else
         _formBirthYear = null;
         _formDeathYear = null;
         _formBio = "";
+        _formSpouseId = "";
+        _formFatherId = "";
+        _formMotherId = "";
+        _spouseQuery = "";
+        _fatherQuery = "";
+        _motherQuery = "";
+        _isSpouseOpen = false;
+        _isFatherOpen = false;
+        _isMotherOpen = false;
     }
 
     private void StartEdit(Person p)
@@ -220,6 +254,215 @@ else
         _formDeathYear = p.DeathYear;
         _formBio = p.Bio ?? "";
     }
+
+    private IEnumerable<Person> GetSpouseCandidates() => GetParentCandidates();
+
+    private IEnumerable<Person> GetFatherCandidates()
+        => GetParentCandidates().Where(p => IsMale(p.Gender));
+
+    private IEnumerable<Person> GetMotherCandidates()
+        => GetParentCandidates().Where(p => IsFemale(p.Gender));
+
+    private IEnumerable<Person> GetParentCandidates()
+        => (_persons ?? Enumerable.Empty<Person>())
+            .Where(p => p.GenealogyId == GenealogyId)
+            .OrderBy(p => p.BirthYear ?? int.MaxValue)
+            .ThenBy(p => p.GivenName);
+
+    private static bool IsMale(string? gender)
+        => !string.IsNullOrWhiteSpace(gender) && (
+            string.Equals(gender, "男", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(gender, "m", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(gender, "male", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsFemale(string? gender)
+        => !string.IsNullOrWhiteSpace(gender) && (
+            string.Equals(gender, "女", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(gender, "f", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(gender, "female", StringComparison.OrdinalIgnoreCase));
+
+    private static string FormatPersonLabel(Person person)
+    {
+        var life = person.BirthYear.HasValue || person.DeathYear.HasValue
+            ? $" ({person.BirthYear?.ToString() ?? "?"}—{person.DeathYear?.ToString() ?? "?"})"
+            : string.Empty;
+
+        return $"{person.GivenName}{life}";
+    }
+
+    private RenderFragment RenderCompactSearchBox(
+        string label,
+        string query,
+        IEnumerable<Person> source,
+        string selectedId,
+        Action<Person> onSelect,
+        Action onClear,
+        Action<bool> onToggle,
+        bool isOpen,
+        Action<string> onQueryChange) => builder =>
+    {
+        var matches = FilterCandidates(source, query).ToList();
+        var sequence = 0;
+
+        builder.OpenElement(sequence++, "div");
+        builder.AddAttribute(sequence++, "class", "border rounded p-2 bg-light");
+        builder.AddAttribute(sequence++, "style", "min-height: 4.5rem;");
+
+        builder.OpenElement(sequence++, "div");
+        builder.AddAttribute(sequence++, "class", "d-flex justify-content-between align-items-center gap-2");
+
+        builder.OpenElement(sequence++, "strong");
+        builder.AddContent(sequence++, label);
+        builder.CloseElement();
+
+        builder.OpenElement(sequence++, "button");
+        builder.AddAttribute(sequence++, "type", "button");
+        builder.AddAttribute(sequence++, "class", "btn btn-sm btn-outline-primary");
+        builder.AddAttribute(sequence++, "onclick", EventCallback.Factory.Create(this, () => onToggle(!isOpen)));
+        builder.AddContent(sequence++, isOpen ? "收起" : "展开搜索");
+        builder.CloseElement();
+
+        builder.CloseElement();
+
+        if (!string.IsNullOrWhiteSpace(selectedId) && TryFindPerson(source, selectedId, out var selectedPerson) && selectedPerson is not null)
+        {
+            builder.OpenElement(sequence++, "div");
+            builder.AddAttribute(sequence++, "class", "text-muted small mt-1");
+            builder.AddContent(sequence++, $"已选择：{FormatPersonLabel(selectedPerson)}");
+            builder.CloseElement();
+        }
+
+        if (isOpen)
+        {
+            builder.OpenElement(sequence++, "div");
+            builder.AddAttribute(sequence++, "class", "mt-2");
+
+            builder.OpenElement(sequence++, "input");
+            builder.AddAttribute(sequence++, "class", "form-control");
+            builder.AddAttribute(sequence++, "placeholder", "输入姓名模糊搜索");
+            builder.AddAttribute(sequence++, "value", query);
+            builder.AddAttribute(sequence++, "oninput", EventCallback.Factory.CreateBinder<string>(this, onQueryChange, query));
+            builder.CloseElement();
+
+            if (!string.IsNullOrWhiteSpace(query) && matches.Count == 0)
+            {
+                builder.OpenElement(sequence++, "div");
+                builder.AddAttribute(sequence++, "class", "text-muted small mt-2");
+                builder.AddContent(sequence++, "族谱没有匹配成员");
+                builder.CloseElement();
+            }
+
+            if (!string.IsNullOrWhiteSpace(selectedId) && TryFindPerson(source, selectedId, out var selectedAgain) && selectedAgain is not null)
+            {
+                builder.OpenElement(sequence++, "div");
+                builder.AddAttribute(sequence++, "class", "d-flex align-items-center gap-2 mt-2 mb-2");
+                builder.OpenElement(sequence++, "span");
+                builder.AddAttribute(sequence++, "class", "badge bg-success");
+                builder.AddContent(sequence++, $"已选：{FormatPersonLabel(selectedAgain)}");
+                builder.CloseElement();
+                builder.OpenElement(sequence++, "button");
+                builder.AddAttribute(sequence++, "type", "button");
+                builder.AddAttribute(sequence++, "class", "btn btn-sm btn-outline-secondary");
+                builder.AddAttribute(sequence++, "onclick", EventCallback.Factory.Create(this, onClear));
+                builder.AddContent(sequence++, "清空");
+                builder.CloseElement();
+                builder.CloseElement();
+            }
+
+            if (matches.Count > 0)
+            {
+                builder.OpenElement(sequence++, "div");
+                builder.AddAttribute(sequence++, "class", "list-group mb-2");
+
+                foreach (var person in matches.Take(8))
+                {
+                    builder.OpenElement(sequence++, "button");
+                    builder.AddAttribute(sequence++, "type", "button");
+                    builder.AddAttribute(sequence++, "class", "list-group-item list-group-item-action d-flex justify-content-between align-items-center");
+                    builder.AddAttribute(sequence++, "onclick", EventCallback.Factory.Create(this, () => onSelect(person)));
+                    builder.AddContent(sequence++, FormatPersonLabel(person));
+                    builder.CloseElement();
+                }
+
+                builder.CloseElement();
+            }
+
+            builder.CloseElement();
+        }
+
+        builder.CloseElement();
+    };
+
+    private void SetSpouseQuery(string value) => _spouseQuery = value;
+    private void SetFatherQuery(string value) => _fatherQuery = value;
+    private void SetMotherQuery(string value) => _motherQuery = value;
+
+    private void SetSpouseOpen(bool isOpen) => _isSpouseOpen = isOpen;
+    private void SetFatherOpen(bool isOpen) => _isFatherOpen = isOpen;
+    private void SetMotherOpen(bool isOpen) => _isMotherOpen = isOpen;
+
+    private static IEnumerable<Person> FilterCandidates(IEnumerable<Person> source, string query)
+    {
+        var list = source.ToList();
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return list;
+        }
+
+        return list.Where(p => p.GivenName.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool TryFindPerson(IEnumerable<Person> source, string idText, out Person? person)
+    {
+        person = null;
+        if (!Guid.TryParse(idText, out var gid))
+        {
+            return false;
+        }
+
+        person = source.FirstOrDefault(p => p.Id == gid);
+        return person != null;
+    }
+
+    private void SetSpouseSelection(Person person)
+    {
+        _formSpouseId = person.Id.ToString();
+        _spouseQuery = person.GivenName;
+    }
+
+    private void ClearSpouseSelection()
+    {
+        _formSpouseId = "";
+        _spouseQuery = "";
+    }
+
+    private void SetFatherSelection(Person person)
+    {
+        _formFatherId = person.Id.ToString();
+        _fatherQuery = person.GivenName;
+    }
+
+    private void ClearFatherSelection()
+    {
+        _formFatherId = "";
+        _fatherQuery = "";
+    }
+
+    private void SetMotherSelection(Person person)
+    {
+        _formMotherId = person.Id.ToString();
+        _motherQuery = person.GivenName;
+    }
+
+    private void ClearMotherSelection()
+    {
+        _formMotherId = "";
+        _motherQuery = "";
+    }
+
+    private void BackToDashboard() => Nav.NavigateTo("/");
+
+    private void BackToGenealogies() => Nav.NavigateTo("/genealogies");
 
     private void CancelEdit()
     {
@@ -240,17 +483,18 @@ else
         _error = null;
         try
         {
-            var model = new Person
-            {
-                GenealogyId = GenealogyId,
-                GivenName = _formGivenName.Trim(),
-                Gender = string.IsNullOrWhiteSpace(_formGender) ? null : _formGender.Trim(),
-                BirthYear = _formBirthYear,
-                DeathYear = _formDeathYear,
-                Bio = string.IsNullOrWhiteSpace(_formBio) ? null : _formBio.Trim()
-            };
+            var request = new CreatePersonDto(
+                GenealogyId,
+                _formGivenName.Trim(),
+                string.IsNullOrWhiteSpace(_formGender) ? null : _formGender.Trim(),
+                _formBirthYear,
+                _formDeathYear,
+                string.IsNullOrWhiteSpace(_formBio) ? null : _formBio.Trim(),
+                Guid.TryParse(_formSpouseId, out var spouseId) ? spouseId : null,
+                Guid.TryParse(_formFatherId, out var fatherId) ? fatherId : null,
+                Guid.TryParse(_formMotherId, out var motherId) ? motherId : null);
 
-            var resp = await Http.PostAsJsonAsync(new Uri(new Uri(Nav.BaseUri), "api/persons"), model);
+            var resp = await Http.PostAsJsonAsync(new Uri(new Uri(Nav.BaseUri), "api/persons"), request);
             if (!resp.IsSuccessStatusCode)
             {
                 _error = await ApiUiMessage.FormatAsync(resp);
