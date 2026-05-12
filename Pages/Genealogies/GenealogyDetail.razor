@@ -25,11 +25,10 @@
         }
         else
         {
-            <p class="text-muted mb-3">
-                <a href="/genealogies">← 返回列表</a>
-                ·
-                <a href="@($"/genealogies/{GenealogyId}/members")">成员管理</a>
-            </p>
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <a class="btn btn-outline-secondary btn-sm" href="/genealogies">返回列表</a>
+                <a class="btn btn-outline-primary btn-sm" href="@($"/genealogies/{GenealogyId}/members")">成员管理</a>
+            </div>
 
             @if (_canEdit)
             {

@@ -46,27 +46,135 @@ namespace GenealogyWeb.Controllers
             return Ok(list);
         }
 
-        /// <summary>新建成员；服务端覆盖 <see cref="Person.Id"/> 与 <see cref="Person.CreatedAt"/>。</summary>
+        /// <summary>新建成员；服务端覆盖 Id / CreatedAt，并可同步写入父母关系。</summary>
         [HttpPost]
-        public async Task<IActionResult> Create([FromBody] Person model, CancellationToken cancellationToken)
+        public async Task<IActionResult> Create([FromBody] CreatePersonDto dto, CancellationToken cancellationToken)
         {
             var userId = User.GetUserIdOrNull();
             if (userId is null) return Unauthorized();
 
-            if (!await _access.CanEditGenealogyContentAsync(userId.Value, model.GenealogyId, cancellationToken))
+            if (!await _access.CanEditGenealogyContentAsync(userId.Value, dto.GenealogyId, cancellationToken))
             {
                 return Forbid();
             }
 
-            if (string.IsNullOrWhiteSpace(model.GivenName))
+            if (string.IsNullOrWhiteSpace(dto.GivenName))
             {
                 return BadRequest("姓名不能为空。");
             }
 
-            model.Id = Guid.NewGuid();
-            model.CreatedAt = DateTime.UtcNow;
+            if (dto.FatherId.HasValue && dto.MotherId.HasValue && dto.FatherId.Value == dto.MotherId.Value)
+            {
+                return BadRequest("父亲和母亲不能是同一人。");
+            }
+
+            if (dto.SpouseId.HasValue && dto.SpouseId.Value == dto.FatherId)
+            {
+                return BadRequest("配偶不能与父亲是同一人。");
+            }
+
+            if (dto.SpouseId.HasValue && dto.SpouseId.Value == dto.MotherId)
+            {
+                return BadRequest("配偶不能与母亲是同一人。");
+            }
+
+            var father = dto.FatherId.HasValue
+                ? await _db.Persons.FirstOrDefaultAsync(p => p.Id == dto.FatherId.Value && p.GenealogyId == dto.GenealogyId, cancellationToken)
+                : null;
+            var mother = dto.MotherId.HasValue
+                ? await _db.Persons.FirstOrDefaultAsync(p => p.Id == dto.MotherId.Value && p.GenealogyId == dto.GenealogyId, cancellationToken)
+                : null;
+            var spouse = dto.SpouseId.HasValue
+                ? await _db.Persons.FirstOrDefaultAsync(p => p.Id == dto.SpouseId.Value && p.GenealogyId == dto.GenealogyId, cancellationToken)
+                : null;
+
+            if (dto.FatherId.HasValue && father == null)
+            {
+                return BadRequest("所选父亲必须属于当前族谱。");
+            }
+
+            if (dto.MotherId.HasValue && mother == null)
+            {
+                return BadRequest("所选母亲必须属于当前族谱。");
+            }
+
+            if (dto.SpouseId.HasValue && spouse == null)
+            {
+                return BadRequest("所选配偶必须属于当前族谱。");
+            }
+
+            if (father != null && !IsMale(father.Gender))
+            {
+                return BadRequest("父亲只能选择男性成员。");
+            }
+
+            if (mother != null && !IsFemale(mother.Gender))
+            {
+                return BadRequest("母亲只能选择女性成员。");
+            }
+
+            var model = new Person
+            {
+                Id = Guid.NewGuid(),
+                GenealogyId = dto.GenealogyId,
+                GivenName = dto.GivenName.Trim(),
+                Gender = string.IsNullOrWhiteSpace(dto.Gender) ? null : dto.Gender.Trim(),
+                BirthYear = dto.BirthYear,
+                DeathYear = dto.DeathYear,
+                Bio = string.IsNullOrWhiteSpace(dto.Bio) ? null : dto.Bio.Trim(),
+                CreatedAt = DateTime.UtcNow
+            };
+
+            if (spouse != null)
+            {
+                var existingMarriage = await _db.Marriages.AnyAsync(m =>
+                    m.GenealogyId == dto.GenealogyId &&
+                    ((m.SpouseAId == spouse.Id && m.SpouseBId == model.Id) ||
+                     (m.SpouseAId == model.Id && m.SpouseBId == spouse.Id)), cancellationToken);
+
+                if (existingMarriage)
+                {
+                    return Conflict("该配偶关系已存在。");
+                }
+            }
+
+            await using var tx = await _db.Database.BeginTransactionAsync(cancellationToken);
             _db.Persons.Add(model);
+
+            if (dto.FatherId.HasValue)
+            {
+                _db.ParentChildren.Add(new ParentChild
+                {
+                    GenealogyId = dto.GenealogyId,
+                    ParentId = dto.FatherId.Value,
+                    ChildId = model.Id,
+                    RelationshipType = "father"
+                });
+            }
+
+            if (dto.MotherId.HasValue)
+            {
+                _db.ParentChildren.Add(new ParentChild
+                {
+                    GenealogyId = dto.GenealogyId,
+                    ParentId = dto.MotherId.Value,
+                    ChildId = model.Id,
+                    RelationshipType = "mother"
+                });
+            }
+
+            if (dto.SpouseId.HasValue)
+            {
+                _db.Marriages.Add(new Marriage
+                {
+                    GenealogyId = dto.GenealogyId,
+                    SpouseAId = model.Id,
+                    SpouseBId = dto.SpouseId.Value
+                });
+            }
+
             await _db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
             return CreatedAtAction(nameof(GetById), new { id = model.Id }, model);
         }
 
@@ -144,8 +252,32 @@ namespace GenealogyWeb.Controllers
             await tx.CommitAsync(cancellationToken);
             return NoContent();
         }
+
+        private static bool IsMale(string? gender)
+            => !string.IsNullOrWhiteSpace(gender) && (
+                string.Equals(gender, "男", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(gender, "m", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(gender, "male", StringComparison.OrdinalIgnoreCase));
+
+        private static bool IsFemale(string? gender)
+            => !string.IsNullOrWhiteSpace(gender) && (
+                string.Equals(gender, "女", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(gender, "f", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(gender, "female", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>更新成员 API 请求体。</summary>
     public record UpdatePersonDto(string GivenName, string? Gender, int? BirthYear, int? DeathYear, string? Bio);
+
+    /// <summary>新建成员 API 请求体，可附带父母关系。</summary>
+    public record CreatePersonDto(
+        Guid GenealogyId,
+        string GivenName,
+        string? Gender,
+        int? BirthYear,
+        int? DeathYear,
+        string? Bio,
+        Guid? SpouseId,
+        Guid? FatherId,
+        Guid? MotherId);
 }
