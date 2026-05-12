@@ -1,0 +1,313 @@
+@page "/genealogies/{GenealogyId:guid}/relations"
+@attribute [Authorize]
+@using System.Net.Http.Json
+@using System.Text.Json.Serialization
+@using GenealogyWeb.Controllers
+@using GenealogyWeb.Models
+@using GenealogyWeb.Shared
+@inject HttpClient Http
+@inject NavigationManager Nav
+@inject ToastService Toasts
+
+<PageTitle>关系查询</PageTitle>
+
+<h3 class="mb-2">关系查询</h3>
+
+<p class="text-muted small mb-3">
+    <a href="/genealogies">← 族谱列表</a>
+    <span class="mx-1">·</span>
+    <a href="@($"/genealogies/{GenealogyId}")">族谱设置</a>
+    <span class="mx-1">·</span>
+    <a href="@($"/genealogies/{GenealogyId}/members")">成员管理</a>
+</p>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        @_error
+        <button type="button" class="btn-close" @onclick="() => _error = null" aria-label="关闭"></button>
+    </div>
+}
+
+@if (!_loaded)
+{
+    <div class="d-flex align-items-center gap-2 text-muted my-4">
+        <div class="spinner-border spinner-border-sm" role="status"></div>
+        <span>正在加载成员列表…</span>
+    </div>
+}
+else if (_persons.Count == 0)
+{
+    <div class="alert alert-light border">本族谱暂无成员，请先在「成员管理」中添加。</div>
+}
+else
+{
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h5 class="card-title">祖先树</h5>
+            <p class="text-muted small mb-3">
+                选择一名成员，展示其<strong>父母一代代向上</strong>的缩进树（数据结构上与后代树相反：子列表表示父母）。
+            </p>
+            <div class="row g-2 align-items-end">
+                <div class="col-md-8">
+                    <label class="form-label">成员</label>
+                    <select class="form-select" @bind="_ancestorPersonIdStr">
+                        @foreach (var p in _persons.OrderBy(x => x.GivenName))
+                        {
+                            <option value="@p.Id">@p.GivenName（@p.Id）</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <button type="button" class="btn btn-primary w-100" @onclick="LoadAncestorsAsync" disabled="@_busyAncestors">
+                        @if (_busyAncestors)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                        }
+                        加载祖先树
+                    </button>
+                </div>
+            </div>
+
+            @if (_ancestorRoots is { Count: > 0 })
+            {
+                <ul class="list-unstyled mt-3 mb-0">
+                    @foreach (var root in _ancestorRoots)
+                    {
+                        <TreeNodeView Node="root" />
+                    }
+                </ul>
+            }
+            else if (!_busyAncestors)
+            {
+                <p class="text-muted small mt-3 mb-0">尚未加载祖先树，请点击「加载祖先树」。</p>
+            }
+        </div>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <h5 class="card-title">两人亲缘路径</h5>
+            <p class="text-muted small mb-3">
+                在「父母—子女」与「配偶」构成的无向图上求最短通路；若无通路则表示当前数据下两人不连通。
+            </p>
+            <div class="row g-2 align-items-end">
+                <div class="col-md-5">
+                    <label class="form-label">起点</label>
+                    <select class="form-select" @bind="_kinFromIdStr">
+                        @foreach (var p in _persons.OrderBy(x => x.GivenName))
+                        {
+                            <option value="@p.Id">@p.GivenName</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label">终点</label>
+                    <select class="form-select" @bind="_kinToIdStr">
+                        @foreach (var p in _persons.OrderBy(x => x.GivenName))
+                        {
+                            <option value="@p.Id">@p.GivenName</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button type="button" class="btn btn-outline-primary w-100" @onclick="LoadKinshipAsync" disabled="@_busyKinship">
+                        @if (_busyKinship)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                        }
+                        查询
+                    </button>
+                </div>
+            </div>
+
+            @if (_kinshipResult != null)
+            {
+                <div class="mt-3">
+                    @if (!_kinshipResult.Connected)
+                    {
+                        <div class="alert alert-warning mb-0">两人之间<strong>无</strong>亲缘通路（或仅一人存在）。</div>
+                    }
+                    else if (_kinshipResult.Path is { Count: > 0 })
+                    {
+                        <ol class="mb-0 ps-3">
+                            @foreach (var step in _kinshipResult.Path)
+                            {
+                                <li class="mb-1">
+                                    <strong>@step.Name</strong>
+                                    <span class="text-muted small">（@step.PersonId）</span>
+                                    <span class="badge bg-light text-dark border ms-1">@step.RelationFromPrevious</span>
+                                </li>
+                            }
+                        </ol>
+                    }
+                    else
+                    {
+                        <div class="alert alert-light border mb-0 small">已连通但未解析到路径节点，请重试或联系管理员。</div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid GenealogyId { get; set; }
+
+    private List<Person> _persons = new();
+    private bool _loaded;
+    private string? _error;
+
+    private string _ancestorPersonIdStr = "";
+    private List<TreeNodeDto>? _ancestorRoots;
+    private bool _busyAncestors;
+
+    private string _kinFromIdStr = "";
+    private string _kinToIdStr = "";
+    private KinshipPathClientDto? _kinshipResult;
+    private bool _busyKinship;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _error = null;
+        _ancestorRoots = null;
+        _kinshipResult = null;
+        _loaded = false;
+        await LoadPersonsAsync();
+    }
+
+    private async Task LoadPersonsAsync()
+    {
+        try
+        {
+            var baseUri = new Uri(Nav.BaseUri);
+            var resp = await Http.GetAsync(new Uri(baseUri, $"api/persons/byGenealogy/{GenealogyId}"));
+            if (!resp.IsSuccessStatusCode)
+            {
+                _error = await ApiUiMessage.FormatAsync(resp);
+                _persons = new List<Person>();
+                _loaded = true;
+                return;
+            }
+
+            _persons = await resp.Content.ReadFromJsonAsync<List<Person>>(ApiUiMessage.JsonReadOptions) ?? new List<Person>();
+            if (_persons.Count > 0)
+            {
+                var first = _persons[0].Id.ToString();
+                if (string.IsNullOrEmpty(_ancestorPersonIdStr) || _persons.All(p => p.Id.ToString() != _ancestorPersonIdStr))
+                {
+                    _ancestorPersonIdStr = first;
+                }
+
+                if (string.IsNullOrEmpty(_kinFromIdStr) || _persons.All(p => p.Id.ToString() != _kinFromIdStr))
+                {
+                    _kinFromIdStr = first;
+                }
+
+                if (string.IsNullOrEmpty(_kinToIdStr) || _persons.All(p => p.Id.ToString() != _kinToIdStr))
+                {
+                    var second = _persons.Count > 1 ? _persons[1].Id.ToString() : first;
+                    _kinToIdStr = second;
+                }
+            }
+
+            _loaded = true;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _loaded = true;
+        }
+    }
+
+    private async Task LoadAncestorsAsync()
+    {
+        if (!Guid.TryParse(_ancestorPersonIdStr, out var pid))
+        {
+            Toasts.ShowInfo("请选择成员。");
+            return;
+        }
+
+        _busyAncestors = true;
+        _error = null;
+        try
+        {
+            var baseUri = new Uri(Nav.BaseUri);
+            var url = new Uri(baseUri, $"api/genealogies/{GenealogyId}/ancestors?personId={pid}");
+            var resp = await Http.GetAsync(url);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _error = await ApiUiMessage.FormatAsync(resp);
+                _ancestorRoots = null;
+                return;
+            }
+
+            _ancestorRoots = await resp.Content.ReadFromJsonAsync<List<TreeNodeDto>>(ApiUiMessage.JsonReadOptions) ?? new List<TreeNodeDto>();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _ancestorRoots = null;
+        }
+        finally
+        {
+            _busyAncestors = false;
+        }
+    }
+
+    private async Task LoadKinshipAsync()
+    {
+        if (!Guid.TryParse(_kinFromIdStr, out var fromId) || !Guid.TryParse(_kinToIdStr, out var toId))
+        {
+            Toasts.ShowInfo("请选择起点与终点。");
+            return;
+        }
+
+        _busyKinship = true;
+        _error = null;
+        try
+        {
+            var baseUri = new Uri(Nav.BaseUri);
+            var url = new Uri(baseUri, $"api/genealogies/{GenealogyId}/kinship?fromPersonId={fromId}&toPersonId={toId}");
+            var resp = await Http.GetAsync(url);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _error = await ApiUiMessage.FormatAsync(resp);
+                _kinshipResult = null;
+                return;
+            }
+
+            _kinshipResult = await resp.Content.ReadFromJsonAsync<KinshipPathClientDto>(ApiUiMessage.JsonReadOptions);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _kinshipResult = null;
+        }
+        finally
+        {
+            _busyKinship = false;
+        }
+    }
+
+    private sealed class KinshipPathClientDto
+    {
+        [JsonPropertyName("connected")]
+        public bool Connected { get; set; }
+
+        [JsonPropertyName("path")]
+        public List<KinshipStepClientDto>? Path { get; set; }
+    }
+
+    private sealed class KinshipStepClientDto
+    {
+        [JsonPropertyName("personId")]
+        public Guid PersonId { get; set; }
+
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = "";
+
+        [JsonPropertyName("relationFromPrevious")]
+        public string RelationFromPrevious { get; set; } = "";
+    }
+}

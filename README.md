@@ -9,13 +9,16 @@
 - 用户注册与登录
 - Cookie 认证
 - 登录后显示当前用户信息
-- 首页 Dashboard
+- 首页 Dashboard：族谱树预览支持**可选树根**；快捷入口含「关系查询」
+- **祖先树** API + 页面：自指定成员向上展示父母链（复用 `TreeNodeView`）
+- 成员编辑时可**同步更新父母与配偶**（可选勾选）；族谱设置中 Owner 可**调整协作者角色**或**移除**受邀用户
+- 课程参考 SQL：`sql/mysql8_recursive_ancestors_example.sql`（递归 CTE 列祖先）
 - 族谱列表 API（仅本人创建或受邀可见）
 - 族谱与成员的 **CRUD**（含删除族谱级联清理）
 - **按邮箱邀请**已注册用户（`Editor` / `Viewer`，仅 Owner）
 - Dashboard 汇总（仅统计有权访问的族谱内成员）
 - MySQL 8 数据库（EF Core **Migrations** + 启动时 `Migrate()`）
-- Blazor 页面：`/genealogies`、族谱设置、成员管理（上述页面需登录，未登录会跳转 `/login?returnUrl=…`）
+- Blazor 页面：`/genealogies`、族谱设置、成员管理、**`/genealogies/{id}/relations` 关系查询**（需登录）
 - 登录后 **returnUrl** 回跳（仅允许站内以 `/` 开头的路径，防开放重定向）
 - 操作成功 **Toast** 轻提示（右下角自动消失）
 
@@ -46,7 +49,8 @@ http://localhost:5000
 
 ## 页面说明
 
-- `/`：Dashboard；未登录可浏览提示，树预览需登录；支持选择预览哪一本族谱
+- `/`：Dashboard；未登录可浏览提示，树预览需登录；支持选择族谱与**树根（可选）**
+- `/genealogies/{id}/relations`：祖先树与两人亲缘路径查询
 - `/genealogies`：族谱列表与新建
 - `/genealogies/{id}`：族谱设置（编辑、邀请、删除）
 - `/genealogies/{id}/members`：成员增删改
@@ -68,7 +72,9 @@ http://localhost:5000
 - `GET /api/genealogies`：仅返回当前用户创建或受邀的族谱
 - `GET /api/genealogies/{id}`
 - `GET /api/genealogies/{id}/me`：当前用户在本族谱角色（`Owner` / `Editor` / `Viewer`）
-- `GET /api/genealogies/{id}/tree`
+- `GET /api/genealogies/{id}/tree?rootId=`：后代树；`rootId` 可选
+- `GET /api/genealogies/{id}/ancestors?personId=`：祖先树（JSON 中子列表表示父母）
+- `GET /api/genealogies/{id}/kinship?fromPersonId=&toPersonId=`：亲缘通路（`connected` + `path` 数组）
 - `GET /api/genealogies/{id}/collaborators`：协作成员列表
 - `POST /api/genealogies`：请求体 JSON `{ "title", "surname", "compiledAt?" }`，创建者由服务端从登录态写入
 - `PUT /api/genealogies/{id}`：更新元数据（Owner / Editor）
@@ -80,7 +86,10 @@ http://localhost:5000
 - `GET /api/persons/byGenealogy/{gid}?q=`
 - `GET /api/persons/{id}`
 - `POST /api/persons`（Owner / Editor）
-- `PUT /api/persons/{id}`：请求体 `UpdatePersonDto`（Owner / Editor）
+- `GET /api/persons/{id}/family`：父母与配偶 Id（编辑回填）
+- `PUT /api/persons/{id}`：请求体含 `syncRelationships`；为 `true` 时按 `fatherId`/`motherId`/`spouseId` 重写关系（可全 null 清除）
+- `PATCH /api/genealogies/{id}/collaborators/{userId}`：请求体 `{ "role": "Editor"|"Viewer" }`（仅 Owner，不可改谱主）
+- `DELETE /api/genealogies/{id}/collaborators/{userId}`：移除协作者（不可移除谱主）
 - `DELETE /api/persons/{id}`（Owner / Editor）
 
 ## 数据库说明
@@ -109,8 +118,7 @@ dotnet dotnet-ef database update
 
 ## 后续计划
 
-- 树状谱系展示增强（选根、多分支）
-- 祖先查询
-- 两人亲缘关系路径查询
+- 树状谱系展示增强（多根、导出图）
 - Dashboard 统计与筛选细化
+- 大规模数据与 `LOAD DATA`、索引与 `EXPLAIN` 对比（课程数据工程 / 物理设计）
 

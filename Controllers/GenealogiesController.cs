@@ -8,7 +8,7 @@ using GenealogyWeb.Services;
 namespace GenealogyWeb.Controllers
 {
     /// <summary>
-    /// 族谱 CRUD（当前含列表/详情/创建）与<strong>后代树</strong> JSON（供 Blazor 递归渲染）。
+    /// 族谱 CRUD、协作邀请、<strong>后代树 / 祖先树 / 亲缘路径</strong> 等 JSON API（供 Blazor 与实验报告引用）。
     /// </summary>
     [ApiController]
     [Authorize]
@@ -254,6 +254,86 @@ namespace GenealogyWeb.Controllers
             return Ok(rows);
         }
 
+        /// <summary>修改协作者角色（仅 Editor / Viewer）；不能修改谱主。</summary>
+        [HttpPatch("{id}/collaborators/{userId}")]
+        public async Task<IActionResult> PatchCollaboratorRole(
+            Guid id,
+            Guid userId,
+            [FromBody] UpdateCollaboratorRoleDto dto,
+            CancellationToken cancellationToken)
+        {
+            var currentUserId = User.GetUserIdOrNull();
+            if (currentUserId is null) return Unauthorized();
+
+            if (!await _access.CanManageGenealogyAsync(currentUserId.Value, id, cancellationToken))
+            {
+                return Forbid();
+            }
+
+            var genealogy = await _db.Genealogies.AsNoTracking().FirstOrDefaultAsync(g => g.Id == id, cancellationToken);
+            if (genealogy == null) return NotFound();
+
+            if (userId == genealogy.CreatedByUserId)
+            {
+                return BadRequest("不能修改谱主在本族谱中的角色。");
+            }
+
+            var newRole = NormalizeInviteRole(dto.Role);
+            if (newRole == null)
+            {
+                return BadRequest("角色只能是 Editor 或 Viewer。");
+            }
+
+            var row = await _db.GenealogyUsers.FirstOrDefaultAsync(
+                gu => gu.GenealogyId == id && gu.UserId == userId,
+                cancellationToken);
+            if (row == null) return NotFound();
+
+            if (string.Equals(row.Role, "Owner", StringComparison.OrdinalIgnoreCase))
+            {
+                return BadRequest("不能通过此接口修改 Owner。");
+            }
+
+            row.Role = newRole;
+            await _db.SaveChangesAsync(cancellationToken);
+            return Ok(new { message = "已更新角色", userId, role = newRole });
+        }
+
+        /// <summary>移除协作者（不能移除谱主）。</summary>
+        [HttpDelete("{id}/collaborators/{userId}")]
+        public async Task<IActionResult> RemoveCollaborator(Guid id, Guid userId, CancellationToken cancellationToken)
+        {
+            var currentUserId = User.GetUserIdOrNull();
+            if (currentUserId is null) return Unauthorized();
+
+            if (!await _access.CanManageGenealogyAsync(currentUserId.Value, id, cancellationToken))
+            {
+                return Forbid();
+            }
+
+            var genealogy = await _db.Genealogies.AsNoTracking().FirstOrDefaultAsync(g => g.Id == id, cancellationToken);
+            if (genealogy == null) return NotFound();
+
+            if (userId == genealogy.CreatedByUserId)
+            {
+                return BadRequest("不能移除谱主。");
+            }
+
+            var row = await _db.GenealogyUsers.FirstOrDefaultAsync(
+                gu => gu.GenealogyId == id && gu.UserId == userId,
+                cancellationToken);
+            if (row == null) return NotFound();
+
+            if (string.Equals(row.Role, "Owner", StringComparison.OrdinalIgnoreCase))
+            {
+                return BadRequest("不能移除 Owner 记录。");
+            }
+
+            _db.GenealogyUsers.Remove(row);
+            await _db.SaveChangesAsync(cancellationToken);
+            return NoContent();
+        }
+
         private static string? NormalizeInviteRole(string? role)
         {
             if (string.IsNullOrWhiteSpace(role))
@@ -318,6 +398,224 @@ namespace GenealogyWeb.Controllers
             return Ok(new[] { tree });
         }
 
+        /// <summary>
+        /// 自某人向上展开祖先树：返回单根 <see cref="TreeNodeDto"/> 数组，其中每个节点的 <c>Children</c> 表示其<strong>父母</strong>（便于复用 <c>TreeNodeView</c> 缩进展示）。
+        /// </summary>
+        [HttpGet("{id}/ancestors")]
+        public async Task<IActionResult> GetAncestors(Guid id, [FromQuery] Guid personId, CancellationToken cancellationToken = default)
+        {
+            var userId = User.GetUserIdOrNull();
+            if (userId is null) return Unauthorized();
+
+            if (!await _access.CanAccessGenealogyAsync(userId.Value, id, cancellationToken))
+            {
+                return Forbid();
+            }
+
+            var persons = await _db.Persons
+                .AsNoTracking()
+                .Where(p => p.GenealogyId == id)
+                .ToListAsync(cancellationToken);
+
+            if (!persons.Any())
+            {
+                return Ok(Array.Empty<TreeNodeDto>());
+            }
+
+            var personLookup = persons.ToDictionary(p => p.Id);
+            if (!personLookup.ContainsKey(personId))
+            {
+                return NotFound("指定成员不属于该族谱或不存在。");
+            }
+
+            var relations = await _db.ParentChildren
+                .AsNoTracking()
+                .Where(r => r.GenealogyId == id)
+                .ToListAsync(cancellationToken);
+
+            var parentsByChild = relations
+                .GroupBy(r => r.ChildId)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.ParentId).Distinct().ToList());
+
+            var root = BuildAncestorTree(personId, personLookup, parentsByChild, new HashSet<Guid>());
+            return Ok(new[] { root });
+        }
+
+        /// <summary>
+        /// 两人之间是否存在亲缘通路（无向图：父母子女边 + 配偶边），若有则返回经过节点序列及相邻关系说明。
+        /// </summary>
+        [HttpGet("{id}/kinship")]
+        public async Task<IActionResult> GetKinship(
+            Guid id,
+            [FromQuery] Guid fromPersonId,
+            [FromQuery] Guid toPersonId,
+            CancellationToken cancellationToken = default)
+        {
+            var userId = User.GetUserIdOrNull();
+            if (userId is null) return Unauthorized();
+
+            if (!await _access.CanAccessGenealogyAsync(userId.Value, id, cancellationToken))
+            {
+                return Forbid();
+            }
+
+            if (fromPersonId == toPersonId)
+            {
+                var one = await _db.Persons.AsNoTracking().FirstOrDefaultAsync(p => p.Id == fromPersonId && p.GenealogyId == id, cancellationToken);
+                if (one == null) return NotFound();
+                return Ok(new KinshipPathResponse(true, new List<KinshipStepDto>
+                {
+                    new(fromPersonId, one.GivenName, "起点")
+                }));
+            }
+
+            var persons = await _db.Persons
+                .AsNoTracking()
+                .Where(p => p.GenealogyId == id)
+                .ToDictionaryAsync(p => p.Id, cancellationToken);
+
+            if (!persons.ContainsKey(fromPersonId) || !persons.ContainsKey(toPersonId))
+            {
+                return NotFound("成员 Id 无效或不属于该族谱。");
+            }
+
+            var adj = await BuildKinshipAdjacency(id, cancellationToken);
+            var path = BreadthFirstKinshipPath(fromPersonId, toPersonId, adj);
+            if (path == null)
+            {
+                return Ok(new KinshipPathResponse(false, null));
+            }
+
+            var steps = new List<KinshipStepDto>(path.Count);
+            for (var i = 0; i < path.Count; i++)
+            {
+                var pid = path[i];
+                var name = persons[pid].GivenName;
+                var label = i == 0 ? "起点" : DescribeEdge(path[i - 1], pid, adj);
+                steps.Add(new KinshipStepDto(pid, name, label));
+            }
+
+            return Ok(new KinshipPathResponse(true, steps));
+        }
+
+        private async Task<Dictionary<Guid, List<(Guid Neighbor, string Kind)>>> BuildKinshipAdjacency(Guid genealogyId, CancellationToken cancellationToken)
+        {
+            var adj = new Dictionary<Guid, List<(Guid, string)>>();
+
+            void AddEdge(Guid a, Guid b, string kind)
+            {
+                if (!adj.TryGetValue(a, out var la))
+                {
+                    la = new List<(Guid, string)>();
+                    adj[a] = la;
+                }
+
+                la.Add((b, kind));
+
+                if (!adj.TryGetValue(b, out var lb))
+                {
+                    lb = new List<(Guid, string)>();
+                    adj[b] = lb;
+                }
+
+                lb.Add((a, kind));
+            }
+
+            var pc = await _db.ParentChildren.AsNoTracking()
+                .Where(r => r.GenealogyId == genealogyId)
+                .ToListAsync(cancellationToken);
+            foreach (var r in pc)
+            {
+                AddEdge(r.ParentId, r.ChildId, "父母—子女");
+            }
+
+            var marriages = await _db.Marriages.AsNoTracking()
+                .Where(m => m.GenealogyId == genealogyId)
+                .ToListAsync(cancellationToken);
+            foreach (var m in marriages)
+            {
+                AddEdge(m.SpouseAId, m.SpouseBId, "配偶");
+            }
+
+            return adj;
+        }
+
+        private static List<Guid>? BreadthFirstKinshipPath(
+            Guid from,
+            Guid to,
+            IReadOnlyDictionary<Guid, List<(Guid Neighbor, string Kind)>> adj)
+        {
+            if (!adj.ContainsKey(from) || !adj.ContainsKey(to))
+            {
+                // 孤立节点仍可能与另一孤立节点不相连；BFS 需能启动
+                if (from == to)
+                {
+                    return new List<Guid> { from };
+                }
+
+                return null;
+            }
+
+            var queue = new Queue<Guid>();
+            var prev = new Dictionary<Guid, Guid>();
+            var visited = new HashSet<Guid> { from };
+            queue.Enqueue(from);
+
+            while (queue.Count > 0)
+            {
+                var u = queue.Dequeue();
+                if (u == to)
+                {
+                    var path = new List<Guid>();
+                    var cur = to;
+                    while (true)
+                    {
+                        path.Add(cur);
+                        if (cur == from) break;
+                        cur = prev[cur];
+                    }
+
+                    path.Reverse();
+                    return path;
+                }
+
+                if (!adj.TryGetValue(u, out var neighbors))
+                {
+                    continue;
+                }
+
+                foreach (var (v, _) in neighbors)
+                {
+                    if (visited.Add(v))
+                    {
+                        prev[v] = u;
+                        queue.Enqueue(v);
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private static string DescribeEdge(
+            Guid from,
+            Guid to,
+            IReadOnlyDictionary<Guid, List<(Guid Neighbor, string Kind)>> adj)
+        {
+            if (adj.TryGetValue(from, out var list))
+            {
+                foreach (var (n, kind) in list)
+                {
+                    if (n == to)
+                    {
+                        return kind;
+                    }
+                }
+            }
+
+            return "—";
+        }
+
         /// <summary>确定树根：显式 rootId，或「不作为任何边的子」的节点集合中的启发式选择。</summary>
         private static Person? SelectRootPerson(List<Person> persons, List<ParentChild> relations, Guid? rootId)
         {
@@ -369,6 +667,39 @@ namespace GenealogyWeb.Controllers
 
             return new TreeNodeDto(person.Id, person.GivenName, person.Gender, person.BirthYear, person.Bio, children);
         }
+
+        /// <summary>自某人向上：每个节点的子节点列表存放其父母（递归）。</summary>
+        private static TreeNodeDto BuildAncestorTree(
+            Guid personId,
+            IReadOnlyDictionary<Guid, Person> personLookup,
+            IReadOnlyDictionary<Guid, List<Guid>> parentsByChild,
+            HashSet<Guid> visiting)
+        {
+            if (!personLookup.TryGetValue(personId, out var person))
+            {
+                throw new InvalidOperationException($"Person {personId} not found.");
+            }
+
+            if (!visiting.Add(personId))
+            {
+                return new TreeNodeDto(person.Id, person.GivenName, person.Gender, person.BirthYear, person.Bio, new List<TreeNodeDto>());
+            }
+
+            var parents = new List<TreeNodeDto>();
+            if (parentsByChild.TryGetValue(personId, out var parentIds))
+            {
+                foreach (var pid in parentIds)
+                {
+                    if (personLookup.ContainsKey(pid))
+                    {
+                        parents.Add(BuildAncestorTree(pid, personLookup, parentsByChild, visiting));
+                    }
+                }
+            }
+
+            visiting.Remove(personId);
+            return new TreeNodeDto(person.Id, person.GivenName, person.Gender, person.BirthYear, person.Bio, parents);
+        }
     }
 
     /// <summary>创建族谱 API 的请求体（勿包含创建者 Id）。</summary>
@@ -383,6 +714,15 @@ namespace GenealogyWeb.Controllers
     /// <summary>协作成员列表项。</summary>
     public record GenealogyCollaboratorDto(Guid UserId, string Email, string UserName, string Role, DateTime InvitedAt);
 
+    /// <summary>修改协作者角色请求体。</summary>
+    public record UpdateCollaboratorRoleDto(string Role);
+
     /// <summary>树节点 DTO，与 Blazor 组件 <c>TreeNodeView</c> 绑定；子节点递归同结构。</summary>
     public record TreeNodeDto(Guid Id, string Name, string? Gender, int? BirthYear, string? Bio, List<TreeNodeDto> Children);
+
+    /// <summary>亲缘路径查询结果。</summary>
+    public record KinshipPathResponse(bool Connected, IReadOnlyList<KinshipStepDto>? Path);
+
+    /// <summary>路径上一步：成员与相对上一点的边类型说明。</summary>
+    public record KinshipStepDto(Guid PersonId, string Name, string RelationFromPrevious);
 }
