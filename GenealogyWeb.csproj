@@ -22,4 +22,8 @@
     <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="8.0.2" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="tools/dbimport/**/*.cs" />
+  </ItemGroup>
+
 </Project>

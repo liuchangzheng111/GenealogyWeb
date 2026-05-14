@@ -13,6 +13,7 @@ import os
 import uuid
 import sys
 from pathlib import Path
+from collections import deque
 
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
@@ -20,6 +21,9 @@ if str(_HERE) not in sys.path:
 
 from datetime import datetime, timezone
 from typing import List, Sequence, Tuple
+
+# 当前年份（用于避免生成未来的出生/卒年）
+CURRENT_YEAR = datetime.now(timezone.utc).year
 
 from demography import (
     MAIDEN_SURNAMES,
@@ -36,6 +40,13 @@ def _parse_guid(s: str) -> str:
     s = s.strip().strip("{}")
     uuid.UUID(s)
     return s.lower()
+
+
+def _safe_mother_birth(child_birth: int, father_birth: int, salt: int) -> int:
+    mb = mother_birth_for_child(child_birth, father_birth, salt)
+    mb = max(mb, father_birth - 6)
+    mb = min(mb, child_birth - 18)
+    return mb
 
 
 def _write_genealogies(
@@ -61,6 +72,65 @@ def _write_genealogy_users(path: str, rows: Sequence[Tuple[str, str, str, str]])
             w.writerow([gid, uid, role, "", invited_at])
 
 
+def _normalize_person_birth_years(persons_path: str, parent_children_path: str) -> None:
+    """把父母出生年向前校正，确保任一父母都至少比子女早 18 年。"""
+    with open(persons_path, "r", newline="", encoding="utf-8") as f:
+        persons = list(csv.DictReader(f))
+
+    person_by_id: dict[str, dict[str, str]] = {row["Id"]: row for row in persons}
+    max_allowed_birth_by_parent: dict[str, int] = {}
+
+    with open(parent_children_path, "r", newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            parent_id = row["ParentId"]
+            child = person_by_id.get(row["ChildId"])
+            if not child:
+                continue
+            child_birth_raw = child.get("BirthYear", "").strip()
+            if not child_birth_raw:
+                continue
+            try:
+                child_birth = int(child_birth_raw)
+            except ValueError:
+                continue
+            allowed = child_birth - 18
+            current = max_allowed_birth_by_parent.get(parent_id)
+            if current is None or allowed < current:
+                max_allowed_birth_by_parent[parent_id] = allowed
+
+    for row in persons:
+        birth_raw = row.get("BirthYear", "").strip()
+        if not birth_raw:
+            continue
+        try:
+            birth = int(birth_raw)
+        except ValueError:
+            continue
+
+        max_allowed = max_allowed_birth_by_parent.get(row["Id"])
+        if max_allowed is not None and birth > max_allowed:
+            birth = max_allowed
+        if birth > CURRENT_YEAR:
+            birth = CURRENT_YEAR
+
+        row["BirthYear"] = str(birth)
+
+        death_raw = row.get("DeathYear", "").strip()
+        if death_raw:
+            try:
+                death = int(death_raw)
+            except ValueError:
+                death = None
+            if death is None or death < birth or death > CURRENT_YEAR:
+                row["DeathYear"] = ""
+
+    fieldnames = ["Id", "GenealogyId", "GivenName", "Gender", "BirthYear", "DeathYear", "Bio", "CreatedAt"]
+    with open(persons_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(persons)
+
+
 def _append_persons_and_edges_big(
     w_persons: csv.writer,
     w_pc: csv.writer,
@@ -77,12 +147,14 @@ def _append_persons_and_edges_big(
     spine_ids = ids[:spine_len]
     # 父链边均标为 father：父节点须为男，避免「女性却为 father 边」的违和与展示歧义。
     spine_births: list[int] = []
-    y = 1180 + (name_base % 9)
+    gaps: list[int] = []
+    for i in range(spine_len - 1):
+        gaps.append(20 + ((i * 11 + name_base) % 21))  # 两代间隔约 20–40 岁
+    y = CURRENT_YEAR - sum(gaps)
     for i in range(spine_len):
         spine_births.append(y)
         if i < spine_len - 1:
-            gap = 20 + ((i * 11 + name_base) % 21)  # 两代间隔约 20–40 岁
-            y = y + gap
+            y = y + gaps[i]
 
     for i in range(spine_len):
         birth = spine_births[i]
@@ -94,11 +166,13 @@ def _append_persons_and_edges_big(
 
     # 主干：每位父亲配母亲（与下一子代同父母），并写婚姻；侧枝与对应子代共母。
     spine_mother_ids: list[str] = []
+    spine_mother_births: list[int] = []
     for i in range(spine_len - 1):
         f_b, c_b = spine_births[i], spine_births[i + 1]
-        mb = mother_birth_for_child(c_b, f_b, name_base + i * 131)
+        mb = _safe_mother_birth(c_b, f_b, name_base + i * 131)
         mid = str(uuid.uuid4())
         spine_mother_ids.append(mid)
+        spine_mother_births.append(mb)
         maiden = MAIDEN_SURNAMES[(name_base + i) % len(MAIDEN_SURNAMES)]
         m_name = bulk_display_name_for_birth(maiden, 900_000 + name_base + i, mb)
         w_persons.writerow(
@@ -122,19 +196,95 @@ def _append_persons_and_edges_big(
         w_pc.writerow([gid, spine_ids[i], spine_ids[i + 1], "father"])
         w_pc.writerow([gid, spine_mother_ids[i], spine_ids[i + 1], "mother"])
 
-    for j in range(spine_len, target_count):
-        pid = (j * 7919) % (spine_len - 1)
-        parent_id = spine_ids[pid]
-        parent_birth = spine_births[pid]
-        mother_id = spine_mother_ids[pid]
-        # 生育年龄约 18–42 岁，满足库触发器「父年 < 子年」
-        child_birth = parent_birth + 18 + ((j + name_base) % 25)
-        gender = "男" if j % 2 == 0 else "女"
-        name = bulk_display_name_for_birth(surname, name_base + j, child_birth)
-        death = maybe_death_year(child_birth, name_base + j)
-        w_persons.writerow([ids[j], gid, name, gender, str(child_birth), death, "主干侧枝", created_at])
-        w_pc.writerow([gid, parent_id, ids[j], "father"])
-        w_pc.writerow([gid, mother_id, ids[j], "mother"])
+    def _branch_spouse(child_birth: int, seed: int) -> tuple[str, int]:
+        spouse_birth = child_birth + ((seed % 5) - 2)
+        if spouse_birth >= CURRENT_YEAR:
+            spouse_birth = CURRENT_YEAR - 1
+        if spouse_birth >= child_birth + 8:
+            spouse_birth = child_birth + 4
+        if spouse_birth <= child_birth - 8:
+            spouse_birth = child_birth - 8
+        spouse_surname = MAIDEN_SURNAMES[(seed + 11) % len(MAIDEN_SURNAMES)]
+        if spouse_surname == surname:
+            spouse_surname = MAIDEN_SURNAMES[(seed + 12) % len(MAIDEN_SURNAMES)]
+        spouse_id = str(uuid.uuid4())
+        spouse_name = bulk_display_name_for_birth(spouse_surname, 930_000 + seed, spouse_birth)
+        w_persons.writerow(
+            [
+                spouse_id,
+                gid,
+                spouse_name,
+                "女" if seed % 2 == 0 else "男",
+                str(spouse_birth),
+                maybe_death_year(spouse_birth, 900_000 + seed),
+                "主干分支·配偶",
+                created_at,
+            ]
+        )
+        return spouse_id, spouse_birth
+
+    created = spine_len + len(spine_mother_ids)
+    branch_queue: deque[tuple[str, int, str, int, int]] = deque()
+    for i in range(spine_len - 1):
+        branch_queue.append((spine_ids[i], spine_births[i], spine_mother_ids[i], spine_mother_births[i], 0))
+
+    branch_seed = 0
+    while branch_queue and created < target_count:
+        father_id, father_birth, mother_id, mother_birth, generation = branch_queue.popleft()
+        if father_birth > CURRENT_YEAR - 22:
+            continue
+
+        branch_children = 3 if generation < 6 else 2 if generation < 9 else 1
+        branch_children = min(branch_children, target_count - created)
+
+        for slot in range(branch_children):
+            child_birth = max(father_birth, mother_birth) + 22 + ((name_base + branch_seed + slot) % 5)
+            if child_birth >= CURRENT_YEAR:
+                child_birth = CURRENT_YEAR - 1
+            if child_birth <= max(father_birth, mother_birth):
+                child_birth = max(father_birth, mother_birth) + 22
+
+            child_id = ids[created]
+            child_gender = "男" if (branch_seed + slot) % 2 == 0 else "女"
+            child_name = bulk_display_name_for_birth(surname, name_base + created, child_birth)
+            child_death = maybe_death_year(child_birth, name_base + created)
+            w_persons.writerow([child_id, gid, child_name, child_gender, str(child_birth), child_death, "主干分支", created_at])
+            w_pc.writerow([gid, father_id, child_id, "father"])
+            w_pc.writerow([gid, mother_id, child_id, "mother"])
+            created += 1
+
+            if created >= target_count:
+                break
+
+            # 让每个分支中的一部分孩子继续繁衍，形成稳定的树，而不是爆炸式扇出。
+            if generation < 8:
+                spouse_id, spouse_birth = _branch_spouse(child_birth, branch_seed + slot)
+                wed = wedding_year_hetero(child_birth, spouse_birth, None, branch_seed + slot)
+                w_m.writerow([gid, child_id, spouse_id, str(wed), "", bulk_marriage_note() + "·分支"])
+                branch_queue.append((child_id, child_birth, spouse_id, spouse_birth, generation + 1))
+
+        branch_seed += 1
+
+    # 如果还剩少量名额，补成叶节点，不再继续繁衍。
+    while created < target_count:
+        parent_idx = (created + name_base) % (spine_len - 1)
+        father_id = spine_ids[parent_idx]
+        father_birth = spine_births[parent_idx]
+        mother_id = spine_mother_ids[parent_idx]
+        mother_birth = spine_mother_births[parent_idx]
+        child_birth = max(father_birth, mother_birth) + 22 + ((created + name_base) % 4)
+        if child_birth >= CURRENT_YEAR:
+            child_birth = CURRENT_YEAR - 1
+        if child_birth <= max(father_birth, mother_birth):
+            child_birth = max(father_birth, mother_birth) + 22
+        child_id = ids[created]
+        child_gender = "男" if created % 2 == 0 else "女"
+        child_name = bulk_display_name_for_birth(surname, name_base + created, child_birth)
+        child_death = maybe_death_year(child_birth, name_base + created)
+        w_persons.writerow([child_id, gid, child_name, child_gender, str(child_birth), child_death, "主干叶节点", created_at])
+        w_pc.writerow([gid, father_id, child_id, "father"])
+        w_pc.writerow([gid, mother_id, child_id, "mother"])
+        created += 1
 
 
 def _append_persons_and_edges_small(
@@ -197,7 +347,7 @@ def _append_persons_and_edges_small(
     chain_mother_ids: list[str] = []
     for i in range(chain - 1):
         f_b, c_b = births[i], births[i + 1]
-        mb = mother_birth_for_child(c_b, f_b, name_base + 4000 + i)
+        mb = _safe_mother_birth(c_b, f_b, name_base + 4000 + i)
         mid = str(uuid.uuid4())
         chain_mother_ids.append(mid)
         maiden = MAIDEN_SURNAMES[(name_base + i + 3) % len(MAIDEN_SURNAMES)]
@@ -225,47 +375,17 @@ def _append_persons_and_edges_small(
         w_pc.writerow([gid, ids[i], ids[i + 1], "father"])
         w_pc.writerow([gid, chain_mother_ids[i], ids[i + 1], "mother"])
 
-    hub_idx = chain // 2
-    hub_id = ids[hub_idx]
-    hub_birth = births[hub_idx]
-    hub_maiden = MAIDEN_SURNAMES[(name_base + hub_idx + 9) % len(MAIDEN_SURNAMES)]
-    if hub_maiden == surname:
-        hub_maiden = MAIDEN_SURNAMES[(name_base + hub_idx + 10) % len(MAIDEN_SURNAMES)]
-    first_leaf_birth = min(2022, hub_birth + 20 + ((name_base) % 22))
-    if first_leaf_birth <= hub_birth:
-        first_leaf_birth = hub_birth + 22
-    hub_wife_birth = mother_birth_for_child(first_leaf_birth, hub_birth, name_base + 777)
-    hub_wife_id = str(uuid.uuid4())
-    hw_name = bulk_display_name_for_birth(hub_maiden, 810_000 + name_base + hub_idx, hub_wife_birth)
-    w_persons.writerow(
-        [
-            hub_wife_id,
-            gid,
-            hw_name,
-            "女",
-            str(hub_wife_birth),
-            maybe_death_year(hub_wife_birth, name_base + 88_888),
-            f"配{surname}氏·叶节点之母",
-            created_at,
-        ]
-    )
-    wed_hub = wedding_year_hetero(hub_birth, hub_wife_birth, first_leaf_birth, name_base + 999)
-    div_h = bulk_divorce_roll(name_base + 3333, wed_hub, first_leaf_birth)
-    w_m.writerow(
-        [
-            gid,
-            hub_id,
-            hub_wife_id,
-            str(wed_hub),
-            "" if div_h is None else str(div_h),
-            bulk_marriage_note() + ("·离异" if div_h is not None else "") + "·叶系",
-        ]
-    )
-
     for j in range(chain, target_count):
-        child_birth = min(2022, hub_birth + 20 + ((j - chain + name_base) % 22))
-        if child_birth <= hub_birth:
-            child_birth = hub_birth + 20
+        parent_idx = (j - chain + name_base) % (chain - 1)
+        father_id = ids[parent_idx]
+        mother_id = chain_mother_ids[parent_idx]
+        father_birth = births[parent_idx]
+        mother_birth = births[parent_idx + 1]
+        child_birth = max(father_birth, mother_birth) + 22 + ((j - chain + name_base) % 5)
+        if child_birth >= CURRENT_YEAR:
+            child_birth = CURRENT_YEAR - 1
+        if child_birth <= max(father_birth, mother_birth):
+            child_birth = max(father_birth, mother_birth) + 22
         w_persons.writerow(
             [
                 ids[j],
@@ -278,8 +398,8 @@ def _append_persons_and_edges_small(
                 created_at,
             ]
         )
-        w_pc.writerow([gid, hub_id, ids[j], "father"])
-        w_pc.writerow([gid, hub_wife_id, ids[j], "mother"])
+        w_pc.writerow([gid, father_id, ids[j], "father"])
+        w_pc.writerow([gid, mother_id, ids[j], "mother"])
 
 
 def main() -> None:
@@ -364,6 +484,8 @@ def main() -> None:
                 sur = branch_surnames[idx - 1]
                 base = 12_000 * idx
                 _append_persons_and_edges_small(w_p, w_pc, w_m, gid, size, created_at, sur, base)
+
+    _normalize_person_birth_years(p_path, pc_path)
 
     spine_len = 31
     big_mothers = spine_len - 1

@@ -40,15 +40,17 @@ def mother_birth_for_child(child_birth: int, father_birth: int, salt: int) -> in
     """
     mom_age = 22 + ((salt * 17 + child_birth) % 15)  # 22..36
     m = child_birth - mom_age
-    # 妻通常比夫年幼：出生年略晚于夫
-    if m <= father_birth:
-        m = father_birth + 1 + (salt % 6)
+    # 母亲出生年围绕父亲小幅波动，但必须明显早于子女。
+    lower_bound = father_birth - 6
+    upper_bound = min(father_birth + 6, child_birth - 18)
+    if upper_bound < lower_bound:
+        upper_bound = child_birth - 18
+    if m < lower_bound:
+        m = lower_bound
+    if m > upper_bound:
+        m = upper_bound
     if m >= child_birth:
-        m = child_birth - 23
-    if m <= father_birth:
-        m = father_birth + 1
-    if m >= child_birth:
-        m = child_birth - 22
+        m = child_birth - 18
     return m
 
 

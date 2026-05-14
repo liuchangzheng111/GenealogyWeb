@@ -41,3 +41,55 @@ mysqldump -u root -p --databases genealogy --result-file=genealogy_backup.sql
 
 - 导入数据后重启 `GenealogyWeb`，Dashboard / 族谱列表将包含新谱（`CreatedByUserId` 为传入的 owner）。若先执行了 `clear_genealogy_domain.sql` 且**尚未**导入 CSV 就启动应用，空库会触发种子里的演示「张氏族谱」；请**先导入再启动**，或导入后再删该谱。
 - 若与本地已有「张氏族谱」等冲突，可先备份库再在空库上导入，或使用新库名连接字符串。
+
+## MySQL 导入示例（命令示例）
+
+以下为在 MySQL 客户端（支持 `LOCAL`）下的导入示例。根据你的环境可使用 `mysql` 命令行或 GUI 客户端；若服务器禁止 `LOCAL`，请把 CSV 上传到服务器并去掉 `LOCAL`。
+
+注意：示例假定 CSV 在 `tools/datagen/out/` 目录下，且第一行为列头，因此使用 `IGNORE 1 LINES`。
+
+```sql
+SET FOREIGN_KEY_CHECKS=0;
+
+-- 1) 族谱及族谱用户
+LOAD DATA LOCAL INFILE 'tools/datagen/out/genealogies.csv'
+INTO TABLE Genealogies
+FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n' IGNORE 1 LINES
+(Id, Title, Surname, CompiledAt, CreatedByUserId, CreatedAt);
+
+LOAD DATA LOCAL INFILE 'tools/datagen/out/genealogy_users.csv'
+INTO TABLE GenealogyUsers
+FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n' IGNORE 1 LINES
+(GenealogyId, UserId, Role, InvitedByUserId, InvitedAt);
+
+-- 2) 人物（Persons）
+LOAD DATA LOCAL INFILE 'tools/datagen/out/persons.csv'
+INTO TABLE Persons
+FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n' IGNORE 1 LINES
+(Id, GenealogyId, GivenName, Gender, BirthYear, DeathYear, Bio, CreatedAt);
+
+-- 3) 亲子边（ParentChildren）
+LOAD DATA LOCAL INFILE 'tools/datagen/out/parent_children.csv'
+INTO TABLE ParentChildren
+FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n' IGNORE 1 LINES
+(GenealogyId, ParentId, ChildId, RelationshipType);
+
+-- 4) 婚姻事实（Marriages）
+LOAD DATA LOCAL INFILE 'tools/datagen/out/marriages.csv'
+INTO TABLE Marriages
+FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n' IGNORE 1 LINES
+(GenealogyId, SpouseAId, SpouseBId, MarriedAtYear, DivorcedAtYear, Note);
+
+SET FOREIGN_KEY_CHECKS=1;
+```
+
+导入后可用以下语句核验行数：
+
+```sql
+SELECT 'genealogies' AS tbl, COUNT(*) FROM Genealogies;
+SELECT 'persons' AS tbl, COUNT(*) FROM Persons;
+SELECT 'parent_children' AS tbl, COUNT(*) FROM ParentChildren;
+SELECT 'marriages' AS tbl, COUNT(*) FROM Marriages;
+```
+
+如果在导入过程中遇到编码或分隔问题，请确保 MySQL 客户端以 `utf8mb4` 读取文件，或先在 Python 端使用 `iconv`/`chcp` 转码保存为 UTF-8 无 BOM 的文件。

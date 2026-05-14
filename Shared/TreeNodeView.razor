@@ -4,26 +4,80 @@
 @using System.Linq
 
 <li class="mb-2">
-    <div title="@BioTooltip">
+    <div class="d-flex align-items-center flex-wrap gap-2" title="@BioTooltip">
+        @if (HasChildren)
+        {
+            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="ToggleExpand" aria-label="展开或收起后代">
+                @(_expanded ? "-" : "+")
+            </button>
+        }
         <strong>@Node.Name</strong>
         <span class="text-muted">@(Node.Gender ?? "未知")</span>
         <span class="text-muted">@((Node.BirthYear.HasValue ? $"，{Node.BirthYear}年出生" : string.Empty))</span>
+        @if (HasChildren)
+        {
+            <span class="badge bg-light text-dark border">后代 @Node.Children.Count</span>
+        }
     </div>
 
-    @if (Node.Children.Any())
+    @if (HasChildren && _expanded)
     {
         <ul class="ms-4 border-start ps-3">
-            @foreach (var child in Node.Children)
+            @foreach (var child in VisibleChildren)
             {
-                <TreeNodeView Node="child" />
+                <TreeNodeView Node="child" Depth="@(Depth + 1)" />
+            }
+
+            @if (RemainingChildCount > 0)
+            {
+                <li class="mt-1">
+                    <button type="button" class="btn btn-sm btn-outline-primary" @onclick="ShowMoreChildren">
+                        显示更多后代（还剩 @RemainingChildCount）
+                    </button>
+                </li>
             }
         </ul>
     }
 </li>
 
 @code {
+    private const int InitialChildBatch = 12;
+    private const int NextChildBatch = 20;
+
     [Parameter]
     public GenealogyWeb.Controllers.TreeNodeDto Node { get; set; } = null!;
+
+    [Parameter]
+    public int Depth { get; set; }
+
+    private Guid _lastNodeId;
+    private bool _expanded;
+    private int _visibleChildren;
+
+    private bool HasChildren => Node.Children.Any();
+    private IEnumerable<GenealogyWeb.Controllers.TreeNodeDto> VisibleChildren => Node.Children.Take(_visibleChildren);
+    private int RemainingChildCount => Math.Max(0, Node.Children.Count - _visibleChildren);
+
+    protected override void OnParametersSet()
+    {
+        if (_lastNodeId != Node.Id)
+        {
+            _lastNodeId = Node.Id;
+            _expanded = Depth < 2;
+            _visibleChildren = Math.Min(Node.Children.Count, InitialChildBatch);
+        }
+        else if (_visibleChildren > Node.Children.Count)
+        {
+            _visibleChildren = Node.Children.Count;
+        }
+    }
+
+    private void ToggleExpand() => _expanded = !_expanded;
+
+    private void ShowMoreChildren()
+    {
+        _visibleChildren = Math.Min(Node.Children.Count, _visibleChildren + NextChildBatch);
+    }
 
     private string? BioTooltip
     {
