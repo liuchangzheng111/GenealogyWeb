@@ -32,13 +32,11 @@ else if (_genealogy is null)
 }
 else
 {
-    <p class="text-muted small mb-3">
-        <a href="/genealogies">← 返回列表</a>
-        <span class="mx-1">·</span>
-        <a href="@($"/genealogies/{GenealogyId}/members")">成员管理</a>
-        <span class="mx-1">·</span>
-        <a href="@($"/genealogies/{GenealogyId}/relations")">关系查询</a>
-    </p>
+    <div class="d-flex flex-wrap gap-2 mb-3">
+        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="BackToGenealogies">返回族谱列表</button>
+        <a class="btn btn-outline-primary btn-sm" href="@($"/genealogies/{GenealogyId}/members")">成员管理</a>
+        <a class="btn btn-outline-primary btn-sm" href="@($"/genealogies/{GenealogyId}/relations")">关系查询</a>
+    </div>
 
     @if (!string.IsNullOrEmpty(_myRole))
     {
@@ -416,4 +414,6 @@ else
         [System.Text.Json.Serialization.JsonPropertyName("role")]
         public string? Role { get; set; }
     }
+
+    private void BackToGenealogies() => Nav.NavigateTo("/genealogies");
 }

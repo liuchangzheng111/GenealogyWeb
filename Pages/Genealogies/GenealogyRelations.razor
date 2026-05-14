@@ -13,13 +13,11 @@
 
 <h3 class="mb-2">关系查询</h3>
 
-<p class="text-muted small mb-3">
-    <a href="/genealogies">← 族谱列表</a>
-    <span class="mx-1">·</span>
-    <a href="@($"/genealogies/{GenealogyId}")">族谱设置</a>
-    <span class="mx-1">·</span>
-    <a href="@($"/genealogies/{GenealogyId}/members")">成员管理</a>
-</p>
+<div class="d-flex flex-wrap gap-2 mb-3">
+    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="BackToGenealogies">返回族谱列表</button>
+    <a class="btn btn-outline-primary btn-sm" href="@($"/genealogies/{GenealogyId}")">族谱设置</a>
+    <a class="btn btn-outline-primary btn-sm" href="@($"/genealogies/{GenealogyId}/members")">成员管理</a>
+</div>
 
 @if (!string.IsNullOrEmpty(_error))
 {
@@ -49,16 +47,21 @@ else
                 选择一名成员，展示其<strong>父母一代代向上</strong>的缩进树（数据结构上与后代树相反：子列表表示父母）。
             </p>
             <div class="row g-2 align-items-end">
-                <div class="col-md-8">
-                    <label class="form-label">成员</label>
-                    <select class="form-select" @bind="_ancestorPersonIdStr">
-                        @foreach (var p in _persons.OrderBy(x => x.GivenName))
-                        {
-                            <option value="@p.Id">@p.GivenName（@p.Id）</option>
-                        }
-                    </select>
+                <div class="col-lg-8">
+                    <CompactPersonSearch Label="成员"
+                                         Candidates="@_persons"
+                                         Query="@_ancestorQuery"
+                                         QueryChanged="@SetAncestorQuery"
+                                         SelectedId="@_ancestorPersonIdStr"
+                                         OnSelect="@SelectAncestorPerson"
+                                         OnClear="@ClearAncestorSelection"
+                                         IsOpen="@_isAncestorSearchOpen"
+                                         IsOpenChanged="@SetAncestorSearchOpen"
+                                         Placeholder="输入姓名模糊搜索祖先树成员"
+                                         NoMatchesText="没有匹配的成员"
+                                         SelectedTextPrefix="当前祖先树成员" />
                 </div>
-                <div class="col-md-4">
+                <div class="col-lg-4">
                     <button type="button" class="btn btn-primary w-100" @onclick="LoadAncestorsAsync" disabled="@_busyAncestors">
                         @if (_busyAncestors)
                         {
@@ -92,25 +95,35 @@ else
                 在「父母—子女」与「配偶」构成的无向图上求最短通路；若无通路则表示当前数据下两人不连通。
             </p>
             <div class="row g-2 align-items-end">
-                <div class="col-md-5">
-                    <label class="form-label">起点</label>
-                    <select class="form-select" @bind="_kinFromIdStr">
-                        @foreach (var p in _persons.OrderBy(x => x.GivenName))
-                        {
-                            <option value="@p.Id">@p.GivenName</option>
-                        }
-                    </select>
+                <div class="col-lg-5">
+                    <CompactPersonSearch Label="起点"
+                                         Candidates="@_persons"
+                                         Query="@_kinFromQuery"
+                                         QueryChanged="@SetKinFromQuery"
+                                         SelectedId="@_kinFromIdStr"
+                                         OnSelect="@SelectKinFromPerson"
+                                         OnClear="@ClearKinFromSelection"
+                                         IsOpen="@_isKinFromSearchOpen"
+                                         IsOpenChanged="@SetKinFromSearchOpen"
+                                         Placeholder="输入起点姓名"
+                                         NoMatchesText="没有匹配的起点成员"
+                                         SelectedTextPrefix="当前起点" />
                 </div>
-                <div class="col-md-5">
-                    <label class="form-label">终点</label>
-                    <select class="form-select" @bind="_kinToIdStr">
-                        @foreach (var p in _persons.OrderBy(x => x.GivenName))
-                        {
-                            <option value="@p.Id">@p.GivenName</option>
-                        }
-                    </select>
+                <div class="col-lg-5">
+                    <CompactPersonSearch Label="终点"
+                                         Candidates="@_persons"
+                                         Query="@_kinToQuery"
+                                         QueryChanged="@SetKinToQuery"
+                                         SelectedId="@_kinToIdStr"
+                                         OnSelect="@SelectKinToPerson"
+                                         OnClear="@ClearKinToSelection"
+                                         IsOpen="@_isKinToSearchOpen"
+                                         IsOpenChanged="@SetKinToSearchOpen"
+                                         Placeholder="输入终点姓名"
+                                         NoMatchesText="没有匹配的终点成员"
+                                         SelectedTextPrefix="当前终点" />
                 </div>
-                <div class="col-md-2">
+                <div class="col-lg-2">
                     <button type="button" class="btn btn-outline-primary w-100" @onclick="LoadKinshipAsync" disabled="@_busyKinship">
                         @if (_busyKinship)
                         {
@@ -130,16 +143,27 @@ else
                     }
                     else if (_kinshipResult.Path is { Count: > 0 })
                     {
-                        <ol class="mb-0 ps-3">
-                            @foreach (var step in _kinshipResult.Path)
-                            {
-                                <li class="mb-1">
-                                    <strong>@step.Name</strong>
-                                    <span class="text-muted small">（@step.PersonId）</span>
-                                    <span class="badge bg-light text-dark border ms-1">@step.RelationFromPrevious</span>
-                                </li>
-                            }
-                        </ol>
+                        <div class="border rounded-3 bg-light p-3" style="overflow:auto;">
+                            <div class="d-flex align-items-center gap-3" style="white-space:nowrap">
+                                @for (var i = 0; i < _kinshipResult.Path.Count; i++)
+                                {
+                                    var node = _kinshipResult.Path[i];
+                                    <div class="p-2 bg-white border rounded text-center" style="min-width:160px;">
+                                            <div class="fw-semibold">@node.Name</div>
+                                        </div>
+
+                                    if (i < _kinshipResult.Path.Count - 1)
+                                    {
+                                        var rel = _kinshipResult.Path[i + 1].RelationFromPrevious;
+                                        <div class="d-flex flex-column align-items-center text-center" style="min-width:140px;">
+                                            <div class="text-muted">→</div>
+                                            <div class="badge bg-secondary text-white mt-1">@rel</div>
+                                            <div class="text-muted">→</div>
+                                        </div>
+                                    }
+                                }
+                            </div>
+                        </div>
                     }
                     else
                     {
@@ -159,13 +183,19 @@ else
     private string? _error;
 
     private string _ancestorPersonIdStr = "";
+    private string _ancestorQuery = "";
     private List<TreeNodeDto>? _ancestorRoots;
     private bool _busyAncestors;
+    private bool _isAncestorSearchOpen;
 
     private string _kinFromIdStr = "";
+    private string _kinFromQuery = "";
     private string _kinToIdStr = "";
+    private string _kinToQuery = "";
     private KinshipPathClientDto? _kinshipResult;
     private bool _busyKinship;
+    private bool _isKinFromSearchOpen;
+    private bool _isKinToSearchOpen;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -197,17 +227,32 @@ else
                 if (string.IsNullOrEmpty(_ancestorPersonIdStr) || _persons.All(p => p.Id.ToString() != _ancestorPersonIdStr))
                 {
                     _ancestorPersonIdStr = first;
+                    _ancestorQuery = _persons[0].GivenName;
+                }
+                else if (string.IsNullOrWhiteSpace(_ancestorQuery) && Guid.TryParse(_ancestorPersonIdStr, out var ancestorId))
+                {
+                    _ancestorQuery = _persons.FirstOrDefault(p => p.Id == ancestorId)?.GivenName ?? _ancestorQuery;
                 }
 
                 if (string.IsNullOrEmpty(_kinFromIdStr) || _persons.All(p => p.Id.ToString() != _kinFromIdStr))
                 {
                     _kinFromIdStr = first;
+                    _kinFromQuery = _persons[0].GivenName;
+                }
+                else if (string.IsNullOrWhiteSpace(_kinFromQuery) && Guid.TryParse(_kinFromIdStr, out var fromId))
+                {
+                    _kinFromQuery = _persons.FirstOrDefault(p => p.Id == fromId)?.GivenName ?? _kinFromQuery;
                 }
 
                 if (string.IsNullOrEmpty(_kinToIdStr) || _persons.All(p => p.Id.ToString() != _kinToIdStr))
                 {
                     var second = _persons.Count > 1 ? _persons[1].Id.ToString() : first;
                     _kinToIdStr = second;
+                    _kinToQuery = _persons.Count > 1 ? _persons[1].GivenName : _persons[0].GivenName;
+                }
+                else if (string.IsNullOrWhiteSpace(_kinToQuery) && Guid.TryParse(_kinToIdStr, out var toId))
+                {
+                    _kinToQuery = _persons.FirstOrDefault(p => p.Id == toId)?.GivenName ?? _kinToQuery;
                 }
             }
 
@@ -253,6 +298,60 @@ else
         {
             _busyAncestors = false;
         }
+    }
+
+    private void SetAncestorQuery(string value) => _ancestorQuery = value;
+    private void SetAncestorSearchOpen(bool isOpen) => _isAncestorSearchOpen = isOpen;
+
+    private Task SelectAncestorPerson(Person person)
+    {
+        _ancestorPersonIdStr = person.Id.ToString();
+        _ancestorQuery = person.GivenName;
+        _isAncestorSearchOpen = true;
+        return Task.CompletedTask;
+    }
+
+    private Task ClearAncestorSelection()
+    {
+        _ancestorPersonIdStr = string.Empty;
+        _ancestorQuery = string.Empty;
+        return Task.CompletedTask;
+    }
+
+    private void SetKinFromQuery(string value) => _kinFromQuery = value;
+    private void SetKinFromSearchOpen(bool isOpen) => _isKinFromSearchOpen = isOpen;
+
+    private Task SelectKinFromPerson(Person person)
+    {
+        _kinFromIdStr = person.Id.ToString();
+        _kinFromQuery = person.GivenName;
+        _isKinFromSearchOpen = true;
+        return Task.CompletedTask;
+    }
+
+    private Task ClearKinFromSelection()
+    {
+        _kinFromIdStr = string.Empty;
+        _kinFromQuery = string.Empty;
+        return Task.CompletedTask;
+    }
+
+    private void SetKinToQuery(string value) => _kinToQuery = value;
+    private void SetKinToSearchOpen(bool isOpen) => _isKinToSearchOpen = isOpen;
+
+    private Task SelectKinToPerson(Person person)
+    {
+        _kinToIdStr = person.Id.ToString();
+        _kinToQuery = person.GivenName;
+        _isKinToSearchOpen = true;
+        return Task.CompletedTask;
+    }
+
+    private Task ClearKinToSelection()
+    {
+        _kinToIdStr = string.Empty;
+        _kinToQuery = string.Empty;
+        return Task.CompletedTask;
     }
 
     private async Task LoadKinshipAsync()
@@ -310,4 +409,6 @@ else
         [JsonPropertyName("relationFromPrevious")]
         public string RelationFromPrevious { get; set; } = "";
     }
+
+    private void BackToGenealogies() => Nav.NavigateTo("/genealogies");
 }

@@ -98,14 +98,18 @@
                                 </select>
                             </div>
                             <div class="col-md-4">
-                                <label class="form-label small text-muted mb-1" for="dash-tree-root">树根（可选）</label>
-                                <select id="dash-tree-root" class="form-select form-select-sm" disabled="@(_personsForTree.Count == 0)" value="@_selectedTreeRootIdStr" @onchange="OnTreeRootChanged">
-                                    <option value="">自动（无父节点优先）</option>
-                                    @foreach (var p in _personsForTree.OrderBy(x => x.GivenName))
-                                    {
-                                        <option value="@p.Id">@p.GivenName</option>
-                                    }
-                                </select>
+                                <CompactPersonSearch Label="树根（可选）"
+                                                     Candidates="@_personsForTree"
+                                                     Query="@_treeRootQuery"
+                                                     QueryChanged="@SetTreeRootQuery"
+                                                     SelectedId="@_selectedTreeRootIdStr"
+                                                     OnSelect="@SelectTreeRootPerson"
+                                                     OnClear="@ClearTreeRootSelection"
+                                                     IsOpen="@_isTreeRootSearchOpen"
+                                                     IsOpenChanged="@SetTreeRootSearchOpen"
+                                                     Placeholder="输入姓名搜索树根"
+                                                     NoMatchesText="没有匹配的树根成员"
+                                                     SelectedTextPrefix="当前树根" />
                             </div>
                             <div class="col-md-4 text-md-end">
                                 <button type="button" class="btn btn-outline-primary btn-sm mt-2 mt-md-0" @onclick="RetryLoadAsync" disabled="@_isLoadingDashboard">刷新全部</button>
@@ -169,6 +173,8 @@
     private Guid? _selectedTreeGenealogyId;
     private List<Person> _personsForTree = new();
     private string _selectedTreeRootIdStr = "";
+    private string _treeRootQuery = string.Empty;
+    private bool _isTreeRootSearchOpen;
 
     private record GenealogyDto(Guid Id, string Title, string Surname);
 
@@ -199,14 +205,9 @@
 
         _selectedTreeGenealogyId = id;
         _selectedTreeRootIdStr = "";
-        await LoadPersonsForTreeAsync();
-        await LoadTreeOnlyAsync(showTreeSpinner: true);
-    }
-
-    private async Task OnTreeRootChanged(ChangeEventArgs e)
-    {
-        _selectedTreeRootIdStr = e.Value?.ToString() ?? "";
-        await LoadTreeOnlyAsync(showTreeSpinner: true);
+        _treeRootQuery = string.Empty;
+        _isTreeRootSearchOpen = false;
+        await Task.WhenAll(LoadPersonsForTreeAsync(), LoadTreeOnlyAsync(showTreeSpinner: true));
     }
 
     private async Task LoadPersonsForTreeAsync()
@@ -231,6 +232,7 @@
             if (!string.IsNullOrEmpty(_selectedTreeRootIdStr) && _personsForTree.All(p => p.Id.ToString() != _selectedTreeRootIdStr))
             {
                 _selectedTreeRootIdStr = "";
+                _treeRootQuery = string.Empty;
             }
         }
         catch
@@ -278,8 +280,7 @@
                     _selectedTreeGenealogyId = genealogies[0].Id;
                 }
 
-                await LoadPersonsForTreeAsync();
-                await LoadTreeOnlyAsync(showTreeSpinner: false);
+                await Task.WhenAll(LoadPersonsForTreeAsync(), LoadTreeOnlyAsync(showTreeSpinner: false));
             }
             else
             {
@@ -344,5 +345,24 @@
                 _loadingTree = false;
             }
         }
+    }
+
+    private void SetTreeRootQuery(string value) => _treeRootQuery = value;
+    private void SetTreeRootSearchOpen(bool isOpen) => _isTreeRootSearchOpen = isOpen;
+
+    private Task SelectTreeRootPerson(Person person)
+    {
+        _selectedTreeRootIdStr = person.Id.ToString();
+        _treeRootQuery = person.GivenName;
+        _isTreeRootSearchOpen = true;
+        return LoadTreeOnlyAsync(showTreeSpinner: true);
+    }
+
+    private Task ClearTreeRootSelection()
+    {
+        _selectedTreeRootIdStr = string.Empty;
+        _treeRootQuery = string.Empty;
+        _isTreeRootSearchOpen = false;
+        return LoadTreeOnlyAsync(showTreeSpinner: true);
     }
 }

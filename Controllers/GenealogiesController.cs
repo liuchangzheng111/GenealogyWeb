@@ -371,6 +371,7 @@ namespace GenealogyWeb.Controllers
             }
 
             var persons = await _db.Persons
+                .AsNoTracking()
                 .Where(p => p.GenealogyId == id)
                 .ToListAsync(cancellationToken);
 
@@ -380,6 +381,7 @@ namespace GenealogyWeb.Controllers
             }
 
             var relations = await _db.ParentChildren
+                .AsNoTracking()
                 .Where(r => r.GenealogyId == id)
                 .ToListAsync(cancellationToken);
 
@@ -480,18 +482,73 @@ namespace GenealogyWeb.Controllers
             }
 
             var adj = await BuildKinshipAdjacency(id, cancellationToken);
-            var path = BreadthFirstKinshipPath(fromPersonId, toPersonId, adj);
+            var parentRelations = await _db.ParentChildren
+                .AsNoTracking()
+                .Where(r => r.GenealogyId == id)
+                .ToListAsync(cancellationToken);
+            var parentSet = new HashSet<(Guid Parent, Guid Child)>(parentRelations.Select(r => (r.ParentId, r.ChildId)));
+
+            var path = BreadthFirstKinshipPath(fromPersonId, toPersonId, adj, persons, parentSet);
             if (path == null)
             {
                 return Ok(new KinshipPathResponse(false, null));
             }
 
+            // parentSet 已在上方构建，可直接使用以判断方向（父/子）
             var steps = new List<KinshipStepDto>(path.Count);
             for (var i = 0; i < path.Count; i++)
             {
                 var pid = path[i];
                 var name = persons[pid].GivenName;
-                var label = i == 0 ? "起点" : DescribeEdge(path[i - 1], pid, adj);
+                string label;
+                if (i == 0)
+                {
+                    label = "起点";
+                }
+                else
+                {
+                    var prev = path[i - 1];
+                    // 查找边的类型
+                    var kind = "";
+                    if (adj.TryGetValue(prev, out var neighbors))
+                    {
+                        foreach (var (n, k) in neighbors)
+                        {
+                            if (n == pid)
+                            {
+                                kind = k;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (kind == "父母—子女")
+                    {
+                        // 如果 prev 是 pid 的父，则 prev -> pid 应显示为父亲/母亲（根据 prev 性别）
+                        if (parentSet.Contains((prev, pid)))
+                        {
+                            label = string.Equals(persons[prev].Gender, "男", StringComparison.OrdinalIgnoreCase) ? "父亲" : "母亲";
+                        }
+                        // 如果 prev 是 pid 的子，则 prev -> pid 显示为儿子/女儿（根据 prev 性别）
+                        else if (parentSet.Contains((pid, prev)))
+                        {
+                            label = string.Equals(persons[prev].Gender, "男", StringComparison.OrdinalIgnoreCase) ? "儿子" : "女儿";
+                        }
+                        else
+                        {
+                            label = "父母—子女";
+                        }
+                    }
+                    else if (kind == "配偶")
+                    {
+                        label = "配偶";
+                    }
+                    else
+                    {
+                        label = string.IsNullOrEmpty(kind) ? "—" : kind;
+                    }
+                }
+
                 steps.Add(new KinshipStepDto(pid, name, label));
             }
 
@@ -543,7 +600,9 @@ namespace GenealogyWeb.Controllers
         private static List<Guid>? BreadthFirstKinshipPath(
             Guid from,
             Guid to,
-            IReadOnlyDictionary<Guid, List<(Guid Neighbor, string Kind)>> adj)
+            IReadOnlyDictionary<Guid, List<(Guid Neighbor, string Kind)>> adj,
+            IReadOnlyDictionary<Guid, Person> persons,
+            HashSet<(Guid Parent, Guid Child)> parentSet)
         {
             if (!adj.ContainsKey(from) || !adj.ContainsKey(to))
             {
@@ -584,7 +643,42 @@ namespace GenealogyWeb.Controllers
                     continue;
                 }
 
-                foreach (var (v, _) in neighbors)
+                // 为了在多条等长路径中优先选择“父亲”，对邻居按优先级排序：
+                // 1. 父亲（邻居是 u 的父且性别为男）
+                // 2. 母亲
+                // 3. 配偶
+                // 4. 子（男）
+                // 5. 子（女）
+                var ordered = neighbors
+                    .Select(nk => new { Id = nk.Neighbor, Kind = nk.Kind })
+                    .DistinctBy(x => x.Id)
+                    .OrderBy(x =>
+                    {
+                        if (x.Kind == "父母—子女")
+                        {
+                            if (parentSet.Contains((x.Id, u)))
+                            {
+                                // x.Id 是 u 的父母之一
+                                var g = persons.TryGetValue(x.Id, out var p) ? p.Gender : null;
+                                if (string.Equals(g, "男", StringComparison.OrdinalIgnoreCase)) return 0;
+                                return 1;
+                            }
+                            if (parentSet.Contains((u, x.Id)))
+                            {
+                                var g = persons.TryGetValue(x.Id, out var p) ? p.Gender : null;
+                                if (string.Equals(g, "男", StringComparison.OrdinalIgnoreCase)) return 3;
+                                return 4;
+                            }
+                            return 5;
+                        }
+
+                        if (x.Kind == "配偶") return 2;
+                        return 6;
+                    })
+                    .Select(x => x.Id)
+                    .ToList();
+
+                foreach (var v in ordered)
                 {
                     if (visited.Add(v))
                     {

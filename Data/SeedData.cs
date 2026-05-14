@@ -32,6 +32,184 @@ namespace GenealogyWeb.Data
             }
 
             EnsureGenealogyOwnerLinks(db, demoUser.Id);
+            // 如果没有王氏族谱，则生成一个较大的测试谱（10代、约500人）以便演示与性能测试
+            if (!db.Genealogies.Any(g => g.Surname == "王"))
+            {
+                SeedLargeWangGenealogy(db, demoUser.Id, generations: 10, targetMembers: 500);
+            }
+        }
+
+        /// <summary>
+        /// 生成较大的王氏族谱用于测试与演示（多代树与父母/婚姻关系）。
+        /// </summary>
+        private static void SeedLargeWangGenealogy(ApplicationDbContext db, Guid ownerUserId, int generations = 10, int targetMembers = 500)
+        {
+            if (generations < 2) generations = 10;
+            if (targetMembers < 10) targetMembers = 500;
+
+            var genealogy = new Genealogy
+            {
+                Id = Guid.NewGuid(),
+                Title = "王氏族谱",
+                Surname = "王",
+                CompiledAt = DateTime.UtcNow,
+                CreatedByUserId = ownerUserId,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            db.Genealogies.Add(genealogy);
+            db.GenealogyUsers.Add(new GenealogyUser
+            {
+                GenealogyId = genealogy.Id,
+                UserId = ownerUserId,
+                Role = "Owner",
+                InvitedByUserId = null,
+                InvitedAt = DateTime.UtcNow
+            });
+
+            // 计算每代人数（几何级数缩放）
+            const double branchFactor = 1.82; // 经验值，使 10 代约 500 人
+            var denom = Math.Pow(branchFactor, generations) - 1.0;
+            var C = targetMembers * (branchFactor - 1.0) / denom;
+            var genCounts = new int[generations];
+            var total = 0;
+            for (int i = 0; i < generations; i++)
+            {
+                genCounts[i] = Math.Max(1, (int)Math.Round(C * Math.Pow(branchFactor, i)));
+                total += genCounts[i];
+            }
+
+            // 若四舍五入导致总数不等于目标，按最后一代调整
+            if (total < targetMembers)
+            {
+                genCounts[generations - 1] += (targetMembers - total);
+                total = targetMembers;
+            }
+
+            var rand = new Random(12345);
+            var personsByGen = new List<List<Person>>();
+            var marriages = new List<Marriage>();
+            var parentChildren = new List<ParentChild>();
+
+            var baseYear = 1800;
+            for (int gen = 0; gen < generations; gen++)
+            {
+                var list = new List<Person>();
+                var year = baseYear + gen * 18; // 每代约 18 年
+                for (int j = 0; j < genCounts[gen]; j++)
+                {
+                    var gender = rand.NextDouble() < 0.5 ? "男" : "女";
+                    var person = new Person
+                    {
+                        Id = Guid.NewGuid(),
+                        GenealogyId = genealogy.Id,
+                        GivenName = $"王{(gen + 1)}代_{j + 1}",
+                        Gender = gender,
+                        BirthYear = year + rand.Next(0, 6),
+                        CreatedAt = DateTime.UtcNow,
+                        Bio = null
+                    };
+                    list.Add(person);
+                }
+
+                // 在当前代内部配对产生婚姻（简单按相邻配对）
+                for (int k = 0; k + 1 < list.Count; k += 2)
+                {
+                    var pA = list[k];
+                    var pB = list[k + 1];
+                    // 强制一男一女优先，如果不是则仍配对
+                    if (pA.Gender == pB.Gender)
+                    {
+                        // 50% 交换性别标签以保证部分不同
+                        if (rand.NextDouble() < 0.5) pA.Gender = "男"; else pB.Gender = "女";
+                    }
+
+                    marriages.Add(new Marriage
+                    {
+                        GenealogyId = genealogy.Id,
+                        SpouseAId = pA.Id,
+                        SpouseBId = pB.Id,
+                        MarriedAtYear = (pA.BirthYear ?? baseYear) + 20
+                    });
+                }
+
+                personsByGen.Add(list);
+            }
+
+            // 生成父母-子女关系：第 i 代作为第 i+1 代的父母来源
+            for (int gen = 0; gen < generations - 1; gen++)
+            {
+                var parents = personsByGen[gen];
+                var children = personsByGen[gen + 1];
+                // 构建父母对列表（使用 marriages within parents generation when possible）
+                var parentPairs = new List<(Guid Father, Guid Mother)>();
+                // use marriages to form pairs
+                var pairs = marriages.Where(m => parents.Any(p => p.Id == m.SpouseAId) && parents.Any(p => p.Id == m.SpouseBId)).ToList();
+                foreach (var m in pairs)
+                {
+                    var pA = parents.First(p => p.Id == m.SpouseAId);
+                    var pB = parents.First(p => p.Id == m.SpouseBId);
+                    var father = pA.Gender == "男" ? pA : pB;
+                    var mother = pA.Gender == "女" ? pA : pB;
+                    parentPairs.Add((Father: father.Id, Mother: mother.Id));
+                }
+
+                // 若没有足够配对，按顺序把父母按两两分组
+                if (parentPairs.Count == 0)
+                {
+                    for (int i = 0; i + 1 < parents.Count; i += 2)
+                    {
+                        var pA = parents[i];
+                        var pB = parents[i + 1];
+                        var father = pA.Gender == "男" ? pA : pB;
+                        var mother = pA.Gender == "女" ? pA : pB;
+                        parentPairs.Add((father.Id, mother.Id));
+                    }
+                }
+
+                if (parentPairs.Count == 0 && parents.Count > 0)
+                {
+                    // fallback: single parent repeated
+                    foreach (var p in parents)
+                    {
+                        parentPairs.Add((p.Id, Guid.Empty));
+                    }
+                }
+
+                // 分配每个 child 的父母为随机某个 parentPair
+                for (int ci = 0; ci < children.Count; ci++)
+                {
+                    var child = children[ci];
+                    var pair = parentPairs[rand.Next(parentPairs.Count)];
+                    if (pair.Father != Guid.Empty)
+                    {
+                        parentChildren.Add(new ParentChild
+                        {
+                            GenealogyId = genealogy.Id,
+                            ParentId = pair.Father,
+                            ChildId = child.Id,
+                            RelationshipType = "father"
+                        });
+                    }
+                    if (pair.Mother != Guid.Empty)
+                    {
+                        parentChildren.Add(new ParentChild
+                        {
+                            GenealogyId = genealogy.Id,
+                            ParentId = pair.Mother,
+                            ChildId = child.Id,
+                            RelationshipType = "mother"
+                        });
+                    }
+                }
+            }
+
+            // 保存所有数据
+            var toAddPersons = personsByGen.SelectMany(x => x).ToList();
+            db.Persons.AddRange(toAddPersons);
+            db.Marriages.AddRange(marriages);
+            db.ParentChildren.AddRange(parentChildren);
+            db.SaveChanges();
         }
 
         /// <summary>若不存在则创建演示用户。</summary>
