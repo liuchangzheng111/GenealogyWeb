@@ -43,9 +43,18 @@ else if (!_canEdit)
 
 @if (_canEdit)
 {
-    <div class="card shadow-sm mb-4">
-        <div class="card-body">
-            <h5 class="card-title">@(_editingId is null ? "新增成员" : "编辑成员")</h5>
+    <div class="d-flex align-items-center gap-2 mb-3">
+        <button type="button" class="btn btn-primary" @onclick="() => ToggleAddForm(true)">添加成员</button>
+        <input class="form-control form-control-sm w-auto" placeholder="搜索成员" @bind="_memberSearchQuery" />
+        <button type="button" class="btn btn-sm btn-primary" @onclick="PerformMemberSearch">搜索</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="ClearMemberSearch">清空</button>
+    </div>
+
+    @if (_showAddForm)
+    {
+        <div class="card shadow-sm mb-4">
+            <div class="card-body">
+                <h5 class="card-title">@(_editingId is null ? "新增成员" : "编辑成员")</h5>
             <p class="text-muted small">配偶、父亲、母亲须为本族谱已有成员。<strong>新增</strong>时随成员一并创建关系；<strong>编辑</strong>时勾选「同步更新父母与配偶」后保存，将按当前选择重写（留空则清除对应关系）。</p>
             <div class="row g-2">
                 <div class="col-md-3">
@@ -94,19 +103,21 @@ else if (!_canEdit)
                     </div>
                 }
             </div>
-            <div class="mt-3">
-                @if (_editingId is null)
-                {
-                    <button type="button" class="btn btn-primary" @onclick="CreatePersonAsync" disabled="@_busy">添加成员</button>
-                }
-                else
-                {
-                    <button type="button" class="btn btn-primary me-2" @onclick="SavePersonAsync" disabled="@_busy">保存修改</button>
-                    <button type="button" class="btn btn-secondary" @onclick="CancelEdit" disabled="@_busy">取消</button>
-                }
+                <div class="mt-3">
+                    @if (_editingId is null)
+                    {
+                        <button type="button" class="btn btn-primary" @onclick="CreatePersonAsync" disabled="@_busy">添加成员</button>
+                        <button type="button" class="btn btn-secondary ms-2" @onclick="() => ToggleAddForm(false)">取消</button>
+                    }
+                    else
+                    {
+                        <button type="button" class="btn btn-primary me-2" @onclick="SavePersonAsync" disabled="@_busy">保存修改</button>
+                        <button type="button" class="btn btn-secondary" @onclick="CancelEdit" disabled="@_busy">取消</button>
+                    }
+                </div>
             </div>
         </div>
-    </div>
+    }
 }
 
 @if (_persons is null)
@@ -130,7 +141,7 @@ else
                 </tr>
             </thead>
             <tbody>
-                @foreach (var p in _persons)
+                @foreach (var p in FilterMembers(_persons ?? new List<Person>(), _memberSearchFilter))
                 {
                     <tr class="@(_editingId == p.Id ? "table-primary" : null)">
                         <td>@p.GivenName</td>
@@ -158,6 +169,9 @@ else
     private bool _canEdit;
     private string? _error;
     private bool _busy;
+    private bool _showAddForm;
+    private string _memberSearchQuery = "";
+    private string _memberSearchFilter = "";
 
     private Guid? _editingId;
     private string _formGivenName = "";
@@ -257,6 +271,7 @@ else
 
     private async Task StartEditAsync(Person p)
     {
+        _showAddForm = true;
         _editingId = p.Id;
         _formGivenName = p.GivenName;
         _formGender = p.Gender ?? "";
@@ -532,6 +547,36 @@ else
     {
         _editingId = null;
         ClearForm();
+        _showAddForm = false;
+    }
+
+    private void ToggleAddForm(bool open)
+    {
+        _showAddForm = open;
+        if (!open)
+        {
+            _editingId = null;
+            ClearForm();
+        }
+    }
+
+    private void ClearMemberSearch()
+    {
+        _memberSearchQuery = string.Empty;
+        _memberSearchFilter = string.Empty;
+    }
+
+    private static IEnumerable<Person> FilterMembers(IEnumerable<Person> source, string query)
+    {
+        var list = source.ToList();
+        if (string.IsNullOrWhiteSpace(query)) return list;
+        var q = query.Trim();
+        return list.Where(p => p.GivenName.Contains(q, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void PerformMemberSearch()
+    {
+        _memberSearchFilter = _memberSearchQuery?.Trim() ?? string.Empty;
     }
 
     private async Task CreatePersonAsync()
