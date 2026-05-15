@@ -47,7 +47,7 @@ dotnet run
 启动后访问：
 
 ```text
-http://localhost:5000
+https://localhost:63973/
 ```
 
 ## 页面说明

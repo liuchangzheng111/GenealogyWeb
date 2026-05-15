@@ -7,7 +7,7 @@
     <div class="d-flex align-items-center flex-wrap gap-2" title="@BioTooltip">
         @if (HasChildren)
         {
-            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="ToggleExpand" aria-label="展开或收起后代">
+            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="ToggleExpand" aria-label="@ToggleLabel">
                 @(_expanded ? "-" : "+")
             </button>
         }
@@ -16,7 +16,7 @@
         <span class="text-muted">@((Node.BirthYear.HasValue ? $"，{Node.BirthYear}年出生" : string.Empty))</span>
         @if (HasChildren)
         {
-            <span class="badge bg-light text-dark border">后代 @Node.Children.Count</span>
+            <span class="badge bg-light text-dark border">@ChildLabel @Node.Children.Count</span>
         }
     </div>
 
@@ -25,14 +25,14 @@
         <ul class="ms-4 border-start ps-3">
             @foreach (var child in VisibleChildren)
             {
-                <TreeNodeView Node="child" Depth="@(Depth + 1)" />
+                <TreeNodeView Node="child" Depth="@(Depth + 1)" IsAncestorTree="IsAncestorTree" />
             }
 
             @if (RemainingChildCount > 0)
             {
                 <li class="mt-1">
                     <button type="button" class="btn btn-sm btn-outline-primary" @onclick="ShowMoreChildren">
-                        显示更多后代（还剩 @RemainingChildCount）
+                        @ShowMoreLabel
                     </button>
                 </li>
             }
@@ -49,6 +49,9 @@
 
     [Parameter]
     public int Depth { get; set; }
+
+    [Parameter]
+    public bool IsAncestorTree { get; set; }
 
     private Guid _lastNodeId;
     private bool _expanded;
@@ -78,6 +81,10 @@
     {
         _visibleChildren = Math.Min(Node.Children.Count, _visibleChildren + NextChildBatch);
     }
+
+    private string ChildLabel => IsAncestorTree ? "父母" : "后代";
+    private string ToggleLabel => IsAncestorTree ? "展开或收起父母" : "展开或收起后代";
+    private string ShowMoreLabel => IsAncestorTree ? $"显示更多父母（还剩 {RemainingChildCount}）" : $"显示更多后代（还剩 {RemainingChildCount}）";
 
     private string? BioTooltip
     {
