@@ -110,8 +110,19 @@ else
         <div class="col-12 col-xl-6">
             <div class="card shadow-sm mb-4">
                 <div class="card-body">
-                    <h5 class="card-title">平均寿命最长的一代</h5>
-                    <p class="text-muted small mb-3">展示各代平均寿命，并标出平均寿命最长的辈分。</p>
+                    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                        <div class="flex-grow-1">
+                            <h5 class="card-title mb-1">平均寿命最长的一代</h5>
+                            <p class="text-muted small mb-0">展示各代平均寿命，并标出平均寿命最长的辈分（使用成员表中的辈分字段）。</p>
+                        </div>
+                        <button type="button" class="btn btn-outline-warning btn-sm" disabled="@_recalcBusy" @onclick="RecalculateGenerationsAsync">
+                            @if (_recalcBusy)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            }
+                            重算辈分
+                        </button>
+                    </div>
 
                     @if (_lifespanRows.Count == 0)
                     {
@@ -237,6 +248,7 @@ else
     private bool _loaded;
     private bool _loadedPersonRelations;
     private bool _busyPersonRelations;
+    private bool _recalcBusy;
     private string _personQuery = string.Empty;
     private string _selectedPersonId = string.Empty;
     private bool _isPersonSearchOpen;
@@ -300,6 +312,34 @@ else
         await LoadGenerationLifespanAsync();
         await LoadUnmarriedMalesAsync();
         await LoadEarlyBirthsAsync();
+    }
+
+    private async Task RecalculateGenerationsAsync()
+    {
+        _recalcBusy = true;
+        _error = null;
+        try
+        {
+            var baseUri = new Uri(Nav.BaseUri);
+            var resp = await Http.PostAsync(new Uri(baseUri, $"api/genealogies/{GenealogyId}/recalculate-generations"), null);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _error = await ApiUiMessage.FormatAsync(resp);
+                return;
+            }
+
+            var result = await resp.Content.ReadFromJsonAsync<RecalcGenerationsResult>(ApiUiMessage.JsonReadOptions);
+            Toasts.ShowSuccess(result?.Message ?? "辈分已重算");
+            await LoadCourseQueryResultsAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = "重算辈分失败：" + ex.Message;
+        }
+        finally
+        {
+            _recalcBusy = false;
+        }
     }
 
     private async Task LoadGenerationLifespanAsync()
@@ -413,6 +453,7 @@ else
         };
 
     private record PersonRelationDto(Guid PersonId, string GivenName, string? Gender, int? BirthYear, string RelationKind);
+    private record RecalcGenerationsResult(string Message, int MemberCount, int MaxGeneration);
     private record GenerationLifespanDto(int Generation, double AvgLifespanYears, int MemberCount);
     private record EarlyBirthPersonDto(Guid PersonId, string GivenName, string? Gender, int? BirthYear, int Generation, double AvgBirthYear);
 }

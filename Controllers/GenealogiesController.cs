@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using GenealogyWeb.Data;
 using GenealogyWeb.Models;
 using GenealogyWeb.Services;
+using System.Data;
+using System.Data.Common;
 
 namespace GenealogyWeb.Controllers
 {
@@ -17,11 +19,16 @@ namespace GenealogyWeb.Controllers
     {
         private readonly ApplicationDbContext _db;
         private readonly IGenealogyAccessService _access;
+        private readonly IGenerationMaintenanceService _generations;
 
-        public GenealogiesController(ApplicationDbContext db, IGenealogyAccessService access)
+        public GenealogiesController(
+            ApplicationDbContext db,
+            IGenealogyAccessService access,
+            IGenerationMaintenanceService generations)
         {
             _db = db;
             _access = access;
+            _generations = generations;
         }
 
         /// <summary>当前用户可访问的族谱列表（创建或受邀）。</summary>
@@ -598,6 +605,26 @@ namespace GenealogyWeb.Controllers
             return Ok(relations);
         }
 
+        /// <summary>按亲子边重算全谱 <see cref="Person.Generation"/>（Owner/Editor）。导入或修复历史数据后调用。</summary>
+        [HttpPost("{id}/recalculate-generations")]
+        public async Task<IActionResult> RecalculateGenerations(Guid id, CancellationToken cancellationToken)
+        {
+            var userId = User.GetUserIdOrNull();
+            if (userId is null) return Unauthorized();
+
+            if (!await _access.CanEditGenealogyContentAsync(userId.Value, id, cancellationToken))
+            {
+                return Forbid();
+            }
+
+            await _generations.RecalculateGenealogyAsync(id, cancellationToken);
+            var maxGen = await _db.Persons.AsNoTracking()
+                .Where(p => p.GenealogyId == id)
+                .MaxAsync(p => (int?)p.Generation, cancellationToken) ?? 0;
+            var count = await _db.Persons.AsNoTracking().CountAsync(p => p.GenealogyId == id, cancellationToken);
+            return Ok(new { message = "辈分已重算", memberCount = count, maxGeneration = maxGen });
+        }
+
         /// <summary>课程接口：统计各代平均寿命，并返回所有代别结果。</summary>
         [HttpGet("{id}/course/generation-lifespan")]
         public async Task<IActionResult> GetGenerationLifespan(Guid id, CancellationToken cancellationToken)
@@ -610,17 +637,7 @@ namespace GenealogyWeb.Controllers
                 return Forbid();
             }
 
-            var persons = await _db.Persons.AsNoTracking().Where(p => p.GenealogyId == id).ToListAsync(cancellationToken);
-            var relations = await _db.ParentChildren.AsNoTracking().Where(pc => pc.GenealogyId == id).ToListAsync(cancellationToken);
-            var depths = BuildPersonDepths(persons, relations);
-
-            var rows = persons
-                .Where(p => p.BirthYear.HasValue && p.DeathYear.HasValue && p.DeathYear >= p.BirthYear && depths.ContainsKey(p.Id))
-                .GroupBy(p => depths[p.Id])
-                .Select(g => new GenerationLifespanDto(g.Key, g.Average(p => p.DeathYear!.Value - p.BirthYear!.Value), g.Count()))
-                .OrderBy(g => g.Generation)
-                .ToList();
-
+            var rows = await QueryGenerationLifespanAsync(id, cancellationToken);
             return Ok(rows);
         }
 
@@ -666,28 +683,81 @@ namespace GenealogyWeb.Controllers
                 return Forbid();
             }
 
-            var persons = await _db.Persons.AsNoTracking().Where(p => p.GenealogyId == id).ToListAsync(cancellationToken);
-            var relations = await _db.ParentChildren.AsNoTracking().Where(pc => pc.GenealogyId == id).ToListAsync(cancellationToken);
-            var depths = BuildPersonDepths(persons, relations);
-
-            var stats = persons
-                .Where(p => p.BirthYear.HasValue && depths.ContainsKey(p.Id))
-                .GroupBy(p => depths[p.Id])
-                .Select(g => new
-                {
-                    Generation = g.Key,
-                    AvgBirthYear = g.Average(p => p.BirthYear!.Value)
-                })
-                .ToDictionary(x => x.Generation, x => x.AvgBirthYear);
-
-            var result = persons
-                .Where(p => p.BirthYear.HasValue && depths.ContainsKey(p.Id) && stats.TryGetValue(depths[p.Id], out var avg) && p.BirthYear < avg)
-                .Select(p => new EarlyBirthPersonDto(p.Id, p.GivenName, p.Gender, p.BirthYear, depths[p.Id], stats[depths[p.Id]]))
-                .OrderBy(r => r.Generation)
-                .ThenBy(r => r.GivenName)
-                .ToList();
-
+            var result = await QueryEarlyBirthsAsync(id, cancellationToken);
             return Ok(result);
+        }
+
+        private async Task<List<GenerationLifespanDto>> QueryGenerationLifespanAsync(Guid genealogyId, CancellationToken cancellationToken)
+        {
+            const string sql = @"
+SELECT p.Generation,
+       AVG(p.DeathYear - p.BirthYear) AS AvgLifespanYears,
+       COUNT(*) AS MemberCount
+FROM Persons p
+WHERE p.GenealogyId = @gid
+  AND p.BirthYear IS NOT NULL AND p.DeathYear IS NOT NULL AND p.DeathYear >= p.BirthYear
+GROUP BY p.Generation
+ORDER BY p.Generation;";
+
+            return await ExecuteSqlQueryAsync(sql, reader => new GenerationLifespanDto(
+                reader.GetInt32(0),
+                reader.IsDBNull(1) ? 0.0 : reader.GetDouble(1),
+                reader.GetInt32(2)
+            ), genealogyId, cancellationToken);
+        }
+
+        private async Task<List<EarlyBirthPersonDto>> QueryEarlyBirthsAsync(Guid genealogyId, CancellationToken cancellationToken)
+        {
+            const string sql = @"
+WITH gen_avg AS (
+    SELECT p.Generation AS depth, AVG(p.BirthYear) AS avg_birth_year
+    FROM Persons p
+    WHERE p.GenealogyId = @gid AND p.BirthYear IS NOT NULL
+    GROUP BY p.Generation
+)
+SELECT p.Id, p.GivenName, p.Gender, p.BirthYear, p.Generation, ga.avg_birth_year
+FROM Persons p
+JOIN gen_avg ga ON ga.depth = p.Generation
+WHERE p.GenealogyId = @gid
+  AND p.BirthYear IS NOT NULL AND p.BirthYear < ga.avg_birth_year
+ORDER BY p.Generation, p.GivenName;";
+
+            return await ExecuteSqlQueryAsync(sql, reader => new EarlyBirthPersonDto(
+                reader.GetGuid(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                reader.GetInt32(4),
+                reader.IsDBNull(5) ? 0.0 : reader.GetDouble(5)
+            ), genealogyId, cancellationToken);
+        }
+
+        private async Task<List<T>> ExecuteSqlQueryAsync<T>(string sql, Func<DbDataReader, T> map, Guid genealogyId, CancellationToken cancellationToken)
+        {
+            var results = new List<T>();
+            var connection = _db.Database.GetDbConnection();
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = sql;
+                var param = command.CreateParameter();
+                param.ParameterName = "@gid";
+                param.Value = genealogyId;
+                param.DbType = DbType.Guid;
+                command.Parameters.Add(param);
+
+                if (connection.State != ConnectionState.Open)
+                {
+                    await connection.OpenAsync(cancellationToken);
+                }
+
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    results.Add(map(reader));
+                }
+            }
+
+            return results;
         }
 
         private static Dictionary<Guid, int> BuildPersonDepths(List<Person> persons, List<ParentChild> relations)
