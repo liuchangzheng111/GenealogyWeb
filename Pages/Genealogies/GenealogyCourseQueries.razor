@@ -1,0 +1,418 @@
+@page "/genealogies/{GenealogyId:guid}/course-queries"
+@attribute [Authorize]
+@using System.Net.Http.Json
+@using System.Text.Json.Serialization
+@using GenealogyWeb.Models
+@using GenealogyWeb.Shared
+@inject HttpClient Http
+@inject NavigationManager Nav
+@inject ToastService Toasts
+
+<PageTitle>其他查询</PageTitle>
+
+<h3 class="mb-2">其他查询</h3>
+
+<div class="d-flex flex-wrap gap-2 mb-3">
+    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="BackToGenealogies">返回族谱列表</button>
+    <a class="btn btn-outline-primary btn-sm" href="@($"/genealogies/{GenealogyId}")">族谱设置</a>
+    <a class="btn btn-outline-primary btn-sm" href="@($"/genealogies/{GenealogyId}/members")">成员管理</a>
+    <a class="btn btn-outline-primary btn-sm" href="@($"/genealogies/{GenealogyId}/relations")">关系查询</a>
+</div>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        @_error
+        <button type="button" class="btn-close" @onclick="() => _error = null" aria-label="关闭"></button>
+    </div>
+}
+
+@if (!_loaded)
+{
+    <div class="d-flex align-items-center gap-2 text-muted my-4">
+        <div class="spinner-border spinner-border-sm" role="status"></div>
+        <span>正在加载课程查询数据…</span>
+    </div>
+}
+else if (_persons.Count == 0)
+{
+    <div class="alert alert-light border">本族谱暂无成员，请先在「成员管理」中添加成员。</div>
+}
+else
+{
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h5 class="card-title">给定成员的配偶与子女</h5>
+            <p class="text-muted small mb-3">根据成员 ID 查询其配偶和所有直接子女，满足其他中的第 1 个 SQL 查询。</p>
+            <div class="row g-2 align-items-end">
+                <div class="col-lg-8">
+                    <CompactPersonSearch Label="成员"
+                                         Candidates="@_persons"
+                                         Query="@_personQuery"
+                                         QueryChanged="@SetPersonQuery"
+                                         SelectedId="@_selectedPersonId"
+                                         OnSelect="@SelectPerson"
+                                         OnClear="@ClearPersonSelection"
+                                         IsOpen="@_isPersonSearchOpen"
+                                         IsOpenChanged="@SetPersonSearchOpen"
+                                         Placeholder="输入姓名模糊搜索成员"
+                                         NoMatchesText="没有匹配的成员"
+                                         SelectedTextPrefix="当前成员" />
+                </div>
+                <div class="col-lg-4">
+                    <button type="button" class="btn btn-primary w-100" @onclick="LoadPersonRelationsAsync" disabled="@_busyPersonRelations">
+                        @if (_busyPersonRelations)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                        }
+                        查询配偶与子女
+                    </button>
+                </div>
+            </div>
+
+            @if (_loadedPersonRelations)
+            {
+                @if (_personRelations.Count == 0)
+                {
+                    <div class="alert alert-light small mt-3 mb-0">当前成员尚无配偶或子女关系。</div>
+                }
+                else
+                {
+                    <div class="table-responsive mt-3">
+                        <table class="table table-sm table-bordered align-middle mb-0 bg-white">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>关系</th>
+                                    <th>姓名</th>
+                                    <th>性别</th>
+                                    <th>出生年</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var relation in _personRelations)
+                                {
+                                    <tr>
+                                        <td>@FormatRelationKind(relation.RelationKind)</td>
+                                        <td>@relation.GivenName</td>
+                                        <td>@(relation.Gender ?? "—")</td>
+                                        <td class="text-muted">@(relation.BirthYear?.ToString() ?? "—")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+
+    <div class="row g-3">
+        <div class="col-12 col-xl-6">
+            <div class="card shadow-sm mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">平均寿命最长的一代</h5>
+                    <p class="text-muted small mb-3">展示各代平均寿命，并标出平均寿命最长的辈分。</p>
+
+                    @if (_lifespanRows.Count == 0)
+                    {
+                        <div class="alert alert-light small mb-0">当前族谱中暂无完整生卒年记录，无法计算平均寿命。</div>
+                    }
+                    else
+                    {
+                        <div class="mb-3">
+                            <div class="fw-semibold">最长平均寿命辈分：</div>
+                            <div class="fs-5">第 @_bestGeneration!.Generation 代，平均寿命约 @string.Format("{0:0.00}", _bestGeneration.AvgLifespanYears) 年</div>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered align-middle mb-0 bg-white">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>辈分</th>
+                                        <th>平均寿命</th>
+                                        <th>成员数</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var row in _lifespanRows)
+                                    {
+                                        <tr class="@(row.Generation == _bestGeneration?.Generation ? "table-success" : null)">
+                                            <td>@row.Generation</td>
+                                            <td>@string.Format("{0:0.00}", row.AvgLifespanYears)</td>
+                                            <td>@row.MemberCount</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-xl-6">
+            <div class="card shadow-sm mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">年龄超过 50 岁且无配偶的男性</h5>
+                    <p class="text-muted small mb-3">满足其他中的第四个 SQL 查询。</p>
+
+                    @if (_unmarriedMales.Count == 0)
+                    {
+                        <div class="alert alert-light small mb-0">当前族谱中暂无符合条件的男性成员。</div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered align-middle mb-0 bg-white">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>姓名</th>
+                                        <th>性别</th>
+                                        <th>出生年</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var person in _unmarriedMales)
+                                    {
+                                        <tr>
+                                            <td>@person.GivenName</td>
+                                            <td>@(person.Gender ?? "—")</td>
+                                            <td class="text-muted">@(person.BirthYear?.ToString() ?? "—")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h5 class="card-title">出生年份早于本代平均值的成员</h5>
+            <p class="text-muted small mb-3">展示满足其他第五个 SQL 查询的成员。</p>
+
+            @if (_earlyBirths.Count == 0)
+            {
+                <div class="alert alert-light small mb-0">当前族谱中暂无满足该条件的成员。</div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered align-middle mb-0 bg-white">
+                        <thead class="table-light">
+                            <tr>
+                                <th>姓名</th>
+                                <th>性别</th>
+                                <th>出生年</th>
+                                <th>辈分</th>
+                                <th>本代平均出生年</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in _earlyBirths)
+                            {
+                                <tr>
+                                    <td>@item.GivenName</td>
+                                    <td>@(item.Gender ?? "—")</td>
+                                    <td class="text-muted">@(item.BirthYear?.ToString() ?? "—")</td>
+                                    <td>@item.Generation</td>
+                                    <td>@string.Format("{0:0.00}", item.AvgBirthYear)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid GenealogyId { get; set; }
+
+    private List<Person> _persons = new();
+    private string? _error;
+    private bool _loaded;
+    private bool _loadedPersonRelations;
+    private bool _busyPersonRelations;
+    private string _personQuery = string.Empty;
+    private string _selectedPersonId = string.Empty;
+    private bool _isPersonSearchOpen;
+
+    private List<PersonRelationDto> _personRelations = new();
+    private List<GenerationLifespanDto> _lifespanRows = new();
+    private GenerationLifespanDto? _bestGeneration;
+    private List<Person> _unmarriedMales = new();
+    private List<EarlyBirthPersonDto> _earlyBirths = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _error = null;
+        _loaded = false;
+        _loadedPersonRelations = false;
+        _personRelations.Clear();
+        _lifespanRows.Clear();
+        _unmarriedMales.Clear();
+        _earlyBirths.Clear();
+
+        try
+        {
+            await LoadPersonsAsync();
+            await LoadCourseQueryResultsAsync();
+            if (!string.IsNullOrEmpty(_selectedPersonId))
+            {
+                await LoadPersonRelationsAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = "加载失败：" + ex.Message;
+        }
+        finally
+        {
+            _loaded = true;
+        }
+    }
+
+    private async Task LoadPersonsAsync()
+    {
+        var baseUri = new Uri(Nav.BaseUri);
+        var resp = await Http.GetAsync(new Uri(baseUri, $"api/persons/byGenealogy/{GenealogyId}"));
+        if (!resp.IsSuccessStatusCode)
+        {
+            _error = await ApiUiMessage.FormatAsync(resp);
+            return;
+        }
+
+        _persons = await resp.Content.ReadFromJsonAsync<List<Person>>(ApiUiMessage.JsonReadOptions) ?? new List<Person>();
+
+        if (_persons.Count > 0 && !Guid.TryParse(_selectedPersonId, out _))
+        {
+            _selectedPersonId = _persons[0].Id.ToString();
+            _personQuery = _persons[0].GivenName;
+        }
+    }
+
+    private async Task LoadCourseQueryResultsAsync()
+    {
+        await LoadGenerationLifespanAsync();
+        await LoadUnmarriedMalesAsync();
+        await LoadEarlyBirthsAsync();
+    }
+
+    private async Task LoadGenerationLifespanAsync()
+    {
+        var baseUri = new Uri(Nav.BaseUri);
+        var resp = await Http.GetAsync(new Uri(baseUri, $"api/genealogies/{GenealogyId}/course/generation-lifespan"));
+        if (!resp.IsSuccessStatusCode)
+        {
+            _error = await ApiUiMessage.FormatAsync(resp);
+            return;
+        }
+
+        _lifespanRows = await resp.Content.ReadFromJsonAsync<List<GenerationLifespanDto>>(ApiUiMessage.JsonReadOptions) ?? new List<GenerationLifespanDto>();
+        _bestGeneration = _lifespanRows.OrderByDescending(r => r.AvgLifespanYears).FirstOrDefault();
+    }
+
+    private async Task LoadUnmarriedMalesAsync()
+    {
+        var baseUri = new Uri(Nav.BaseUri);
+        var resp = await Http.GetAsync(new Uri(baseUri, $"api/genealogies/{GenealogyId}/course/unmarried-male-over50"));
+        if (!resp.IsSuccessStatusCode)
+        {
+            _error = await ApiUiMessage.FormatAsync(resp);
+            return;
+        }
+
+        _unmarriedMales = await resp.Content.ReadFromJsonAsync<List<Person>>(ApiUiMessage.JsonReadOptions) ?? new List<Person>();
+    }
+
+    private async Task LoadEarlyBirthsAsync()
+    {
+        var baseUri = new Uri(Nav.BaseUri);
+        var resp = await Http.GetAsync(new Uri(baseUri, $"api/genealogies/{GenealogyId}/course/early-births"));
+        if (!resp.IsSuccessStatusCode)
+        {
+            _error = await ApiUiMessage.FormatAsync(resp);
+            return;
+        }
+
+        _earlyBirths = await resp.Content.ReadFromJsonAsync<List<EarlyBirthPersonDto>>(ApiUiMessage.JsonReadOptions) ?? new List<EarlyBirthPersonDto>();
+    }
+
+    private async Task LoadPersonRelationsAsync()
+    {
+        if (!Guid.TryParse(_selectedPersonId, out var personId))
+        {
+            _personRelations.Clear();
+            _loadedPersonRelations = true;
+            return;
+        }
+
+        _busyPersonRelations = true;
+        _loadedPersonRelations = false;
+        _personRelations.Clear();
+        _error = null;
+
+        try
+        {
+            var baseUri = new Uri(Nav.BaseUri);
+            var resp = await Http.GetAsync(new Uri(baseUri, $"api/genealogies/{GenealogyId}/course/person-relations?personId={personId}"));
+            if (!resp.IsSuccessStatusCode)
+            {
+                _error = await ApiUiMessage.FormatAsync(resp);
+                return;
+            }
+
+            _personRelations = await resp.Content.ReadFromJsonAsync<List<PersonRelationDto>>(ApiUiMessage.JsonReadOptions) ?? new List<PersonRelationDto>();
+        }
+        finally
+        {
+            _busyPersonRelations = false;
+            _loadedPersonRelations = true;
+        }
+    }
+
+    private void SetPersonQuery(string query)
+    {
+        _personQuery = query;
+    }
+
+    private void SetPersonSearchOpen(bool open)
+    {
+        _isPersonSearchOpen = open;
+    }
+
+    private void SelectPerson(Person person)
+    {
+        _selectedPersonId = person.Id.ToString();
+        _personQuery = person.GivenName;
+    }
+
+    private void ClearPersonSelection()
+    {
+        _selectedPersonId = string.Empty;
+        _personQuery = string.Empty;
+        _personRelations.Clear();
+        _loadedPersonRelations = false;
+    }
+
+    private void BackToGenealogies()
+    {
+        Nav.NavigateTo("/genealogies");
+    }
+
+    private static string FormatRelationKind(string kind)
+        => kind switch
+        {
+            "spouse" => "配偶",
+            "child" => "子女",
+            _ => kind
+        };
+
+    private record PersonRelationDto(Guid PersonId, string GivenName, string? Gender, int? BirthYear, string RelationKind);
+    private record GenerationLifespanDto(int Generation, double AvgLifespanYears, int MemberCount);
+    private record EarlyBirthPersonDto(Guid PersonId, string GivenName, string? Gender, int? BirthYear, int Generation, double AvgBirthYear);
+}

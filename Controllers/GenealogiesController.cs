@@ -555,6 +555,186 @@ namespace GenealogyWeb.Controllers
             return Ok(new KinshipPathResponse(true, steps));
         }
 
+        /// <summary>课程接口：给定成员 Id，返回其配偶与所有子女。</summary>
+        [HttpGet("{id}/course/person-relations")]
+        public async Task<IActionResult> GetPersonRelations(Guid id, Guid personId, CancellationToken cancellationToken)
+        {
+            var userId = User.GetUserIdOrNull();
+            if (userId is null) return Unauthorized();
+
+            if (!await _access.CanAccessGenealogyAsync(userId.Value, id, cancellationToken))
+            {
+                return Forbid();
+            }
+
+            var person = await _db.Persons.AsNoTracking().FirstOrDefaultAsync(p => p.Id == personId && p.GenealogyId == id, cancellationToken);
+            if (person == null)
+            {
+                return NotFound();
+            }
+
+            var spouseIds = await _db.Marriages.AsNoTracking()
+                .Where(m => m.GenealogyId == id && (m.SpouseAId == personId || m.SpouseBId == personId))
+                .Select(m => m.SpouseAId == personId ? m.SpouseBId : m.SpouseAId)
+                .ToListAsync(cancellationToken);
+
+            var spouseRelations = await _db.Persons.AsNoTracking()
+                .Where(p => p.GenealogyId == id && spouseIds.Contains(p.Id))
+                .Select(p => new PersonRelationDto(p.Id, p.GivenName, p.Gender, p.BirthYear, "spouse"))
+                .ToListAsync(cancellationToken);
+
+            var childrenRelations = await (
+                from pc in _db.ParentChildren.AsNoTracking()
+                join c in _db.Persons.AsNoTracking() on pc.ChildId equals c.Id
+                where pc.GenealogyId == id && pc.ParentId == personId && c.GenealogyId == id
+                select new PersonRelationDto(c.Id, c.GivenName, c.Gender, c.BirthYear, "child")
+            ).ToListAsync(cancellationToken);
+
+            var relations = spouseRelations.Concat(childrenRelations)
+                .OrderBy(r => r.RelationKind)
+                .ThenBy(r => r.GivenName)
+                .ToList();
+
+            return Ok(relations);
+        }
+
+        /// <summary>课程接口：统计各代平均寿命，并返回所有代别结果。</summary>
+        [HttpGet("{id}/course/generation-lifespan")]
+        public async Task<IActionResult> GetGenerationLifespan(Guid id, CancellationToken cancellationToken)
+        {
+            var userId = User.GetUserIdOrNull();
+            if (userId is null) return Unauthorized();
+
+            if (!await _access.CanAccessGenealogyAsync(userId.Value, id, cancellationToken))
+            {
+                return Forbid();
+            }
+
+            var persons = await _db.Persons.AsNoTracking().Where(p => p.GenealogyId == id).ToListAsync(cancellationToken);
+            var relations = await _db.ParentChildren.AsNoTracking().Where(pc => pc.GenealogyId == id).ToListAsync(cancellationToken);
+            var depths = BuildPersonDepths(persons, relations);
+
+            var rows = persons
+                .Where(p => p.BirthYear.HasValue && p.DeathYear.HasValue && p.DeathYear >= p.BirthYear && depths.ContainsKey(p.Id))
+                .GroupBy(p => depths[p.Id])
+                .Select(g => new GenerationLifespanDto(g.Key, g.Average(p => p.DeathYear!.Value - p.BirthYear!.Value), g.Count()))
+                .OrderBy(g => g.Generation)
+                .ToList();
+
+            return Ok(rows);
+        }
+
+        /// <summary>课程接口：查询当前族谱中年龄超过 50 岁且无配偶的男性成员。</summary>
+        [HttpGet("{id}/course/unmarried-male-over50")]
+        public async Task<IActionResult> GetUnmarriedMaleOver50(Guid id, CancellationToken cancellationToken)
+        {
+            var userId = User.GetUserIdOrNull();
+            if (userId is null) return Unauthorized();
+
+            if (!await _access.CanAccessGenealogyAsync(userId.Value, id, cancellationToken))
+            {
+                return Forbid();
+            }
+
+            var currentYear = DateTime.UtcNow.Year;
+            var cutoffYear = currentYear - 51;
+            var marriedIds = await _db.Marriages.AsNoTracking()
+                .Where(m => m.GenealogyId == id)
+                .SelectMany(m => new[] { m.SpouseAId, m.SpouseBId })
+                .Distinct()
+                .ToListAsync(cancellationToken);
+
+            var result = await _db.Persons.AsNoTracking()
+                .Where(p => p.GenealogyId == id && p.BirthYear.HasValue && p.BirthYear <= cutoffYear)
+                .Where(p => IsMale(p.Gender))
+                .Where(p => !marriedIds.Contains(p.Id))
+                .OrderBy(p => p.GivenName)
+                .ToListAsync(cancellationToken);
+
+            return Ok(result);
+        }
+
+        /// <summary>课程接口：查询出生年份早于本代平均值的成员。</summary>
+        [HttpGet("{id}/course/early-births")]
+        public async Task<IActionResult> GetEarlyBirths(Guid id, CancellationToken cancellationToken)
+        {
+            var userId = User.GetUserIdOrNull();
+            if (userId is null) return Unauthorized();
+
+            if (!await _access.CanAccessGenealogyAsync(userId.Value, id, cancellationToken))
+            {
+                return Forbid();
+            }
+
+            var persons = await _db.Persons.AsNoTracking().Where(p => p.GenealogyId == id).ToListAsync(cancellationToken);
+            var relations = await _db.ParentChildren.AsNoTracking().Where(pc => pc.GenealogyId == id).ToListAsync(cancellationToken);
+            var depths = BuildPersonDepths(persons, relations);
+
+            var stats = persons
+                .Where(p => p.BirthYear.HasValue && depths.ContainsKey(p.Id))
+                .GroupBy(p => depths[p.Id])
+                .Select(g => new
+                {
+                    Generation = g.Key,
+                    AvgBirthYear = g.Average(p => p.BirthYear!.Value)
+                })
+                .ToDictionary(x => x.Generation, x => x.AvgBirthYear);
+
+            var result = persons
+                .Where(p => p.BirthYear.HasValue && depths.ContainsKey(p.Id) && stats.TryGetValue(depths[p.Id], out var avg) && p.BirthYear < avg)
+                .Select(p => new EarlyBirthPersonDto(p.Id, p.GivenName, p.Gender, p.BirthYear, depths[p.Id], stats[depths[p.Id]]))
+                .OrderBy(r => r.Generation)
+                .ThenBy(r => r.GivenName)
+                .ToList();
+
+            return Ok(result);
+        }
+
+        private static Dictionary<Guid, int> BuildPersonDepths(List<Person> persons, List<ParentChild> relations)
+        {
+            var depths = new Dictionary<Guid, int>();
+            var childrenByParent = relations
+                .GroupBy(r => r.ParentId)
+                .ToDictionary(g => g.Key, g => g.Select(r => r.ChildId).ToList());
+
+            var rootIds = persons.Select(p => p.Id).Except(relations.Select(r => r.ChildId)).ToList();
+            var queue = new Queue<Guid>();
+            foreach (var rootId in rootIds)
+            {
+                depths[rootId] = 0;
+                queue.Enqueue(rootId);
+            }
+
+            while (queue.Count > 0)
+            {
+                var parentId = queue.Dequeue();
+                if (!childrenByParent.TryGetValue(parentId, out var childIds))
+                {
+                    continue;
+                }
+
+                var parentDepth = depths[parentId];
+                foreach (var childId in childIds)
+                {
+                    var nextDepth = parentDepth + 1;
+                    if (!depths.TryGetValue(childId, out var existingDepth) || nextDepth < existingDepth)
+                    {
+                        depths[childId] = nextDepth;
+                        queue.Enqueue(childId);
+                    }
+                }
+            }
+
+            return depths;
+        }
+
+        private static bool IsMale(string? gender)
+            => !string.IsNullOrWhiteSpace(gender) && (
+                string.Equals(gender, "男", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(gender, "m", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(gender, "male", StringComparison.OrdinalIgnoreCase) ||
+                gender.StartsWith("男", StringComparison.OrdinalIgnoreCase));
+
         private async Task<Dictionary<Guid, List<(Guid Neighbor, string Kind)>>> BuildKinshipAdjacency(Guid genealogyId, CancellationToken cancellationToken)
         {
             var adj = new Dictionary<Guid, List<(Guid, string)>>();
@@ -819,4 +999,13 @@ namespace GenealogyWeb.Controllers
 
     /// <summary>路径上一步：成员与相对上一点的边类型说明。</summary>
     public record KinshipStepDto(Guid PersonId, string Name, string RelationFromPrevious);
+
+    /// <summary>成员配偶与子女查询结果。</summary>
+    public record PersonRelationDto(Guid PersonId, string GivenName, string? Gender, int? BirthYear, string RelationKind);
+
+    /// <summary>每代平均寿命统计。</summary>
+    public record GenerationLifespanDto(int Generation, double AvgLifespanYears, int MemberCount);
+
+    /// <summary>出生年份早于本代平均值的成员。</summary>
+    public record EarlyBirthPersonDto(Guid PersonId, string GivenName, string? Gender, int? BirthYear, int Generation, double AvgBirthYear);
 }

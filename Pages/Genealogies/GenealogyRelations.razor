@@ -17,6 +17,7 @@
     <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="BackToGenealogies">返回族谱列表</button>
     <a class="btn btn-outline-primary btn-sm" href="@($"/genealogies/{GenealogyId}")">族谱设置</a>
     <a class="btn btn-outline-primary btn-sm" href="@($"/genealogies/{GenealogyId}/members")">成员管理</a>
+    <a class="btn btn-outline-primary btn-sm" href="@($"/genealogies/{GenealogyId}/course-queries")">其他查询</a>
 </div>
 
 @if (!string.IsNullOrEmpty(_error))
