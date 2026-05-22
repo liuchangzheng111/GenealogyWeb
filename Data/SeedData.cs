@@ -37,6 +37,34 @@ namespace GenealogyWeb.Data
             {
                 SeedLargeWangGenealogy(db, demoUser.Id, generations: 10, targetMembers: 500);
             }
+
+            RepairStaleGenerationsIfNeeded(db);
+        }
+
+        /// <summary>历史库若辈分仍为默认 0/1 挤在一起，按亲子边全量重算一次。</summary>
+        private static void RepairStaleGenerationsIfNeeded(ApplicationDbContext db)
+        {
+            foreach (var genealogyId in db.Genealogies.Select(g => g.Id).ToList())
+            {
+                if (!db.ParentChildren.Any(pc => pc.GenealogyId == genealogyId))
+                {
+                    continue;
+                }
+
+                var memberCount = db.Persons.Count(p => p.GenealogyId == genealogyId);
+                if (memberCount < 10)
+                {
+                    continue;
+                }
+
+                var maxGen = db.Persons.Where(p => p.GenealogyId == genealogyId).Max(p => (int?)p.Generation) ?? 0;
+                if (maxGen > 1)
+                {
+                    continue;
+                }
+
+                GenerationAssigner.RecalculateGenealogyAsync(db, genealogyId).GetAwaiter().GetResult();
+            }
         }
 
         /// <summary>
@@ -106,6 +134,7 @@ namespace GenealogyWeb.Data
                         GivenName = $"王{(gen + 1)}代_{j + 1}",
                         Gender = gender,
                         BirthYear = year + rand.Next(0, 6),
+                        Generation = gen,
                         CreatedAt = DateTime.UtcNow,
                         Bio = null
                     };
@@ -254,6 +283,7 @@ namespace GenealogyWeb.Data
                 GivenName = "张国强",
                 Gender = "男",
                 BirthYear = 1940,
+                Generation = 0,
                 Bio = "家族上一代长辈",
                 CreatedAt = DateTime.UtcNow
             };
@@ -265,6 +295,7 @@ namespace GenealogyWeb.Data
                 GivenName = "李秀兰",
                 Gender = "女",
                 BirthYear = 1942,
+                Generation = 0,
                 Bio = "家族长辈",
                 CreatedAt = DateTime.UtcNow
             };
@@ -276,6 +307,7 @@ namespace GenealogyWeb.Data
                 GivenName = "张建国",
                 Gender = "男",
                 BirthYear = 1968,
+                Generation = 1,
                 Bio = "家庭成员",
                 CreatedAt = DateTime.UtcNow
             };
@@ -287,6 +319,7 @@ namespace GenealogyWeb.Data
                 GivenName = "张丽",
                 Gender = "女",
                 BirthYear = 1972,
+                Generation = 1,
                 Bio = "家庭成员",
                 CreatedAt = DateTime.UtcNow
             };
@@ -298,6 +331,7 @@ namespace GenealogyWeb.Data
                 GivenName = "张伟",
                 Gender = "男",
                 BirthYear = 1995,
+                Generation = 2,
                 Bio = "年轻一代",
                 CreatedAt = DateTime.UtcNow
             };

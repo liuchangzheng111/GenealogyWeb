@@ -17,11 +17,13 @@ namespace GenealogyWeb.Controllers
     {
         private readonly ApplicationDbContext _db;
         private readonly IGenealogyAccessService _access;
+        private readonly IGenerationMaintenanceService _generations;
 
-        public PersonsController(ApplicationDbContext db, IGenealogyAccessService access)
+        public PersonsController(ApplicationDbContext db, IGenealogyAccessService access, IGenerationMaintenanceService generations)
         {
             _db = db;
             _access = access;
+            _generations = generations;
         }
 
         /// <summary>按族谱列出成员；<paramref name="q"/> 非空时对 <see cref="Person.GivenName"/> 做 SQL Like 模糊匹配。</summary>
@@ -185,6 +187,8 @@ namespace GenealogyWeb.Controllers
                     SpouseBId = dto.SpouseId.Value
                 });
             }
+
+            GenerationAssigner.ApplyChildGeneration(model, father, mother);
 
             await _db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
@@ -370,6 +374,8 @@ namespace GenealogyWeb.Controllers
                     });
                 }
 
+                GenerationAssigner.ApplyChildGeneration(entity, father, mother);
+
                 await _db.SaveChangesAsync(cancellationToken);
                 await tx.CommitAsync(cancellationToken);
                 await _db.Entry(entity).ReloadAsync(cancellationToken);
@@ -410,6 +416,7 @@ namespace GenealogyWeb.Controllers
                 .ExecuteDeleteAsync(cancellationToken);
             await _db.Persons.Where(p => p.Id == id).ExecuteDeleteAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
+            await _generations.RecalculateGenealogyAsync(gid, cancellationToken);
             return NoContent();
         }
 
