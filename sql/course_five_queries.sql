@@ -50,18 +50,42 @@ ORDER BY an.generation, p.GivenName;
 
 -- -----------------------------------------------------------------------------
 -- 3) 统计分析：某家族中「平均寿命」最长的一代人（辈分）
---     说明：辈分使用 Persons.Generation（无父母为 0，父母为 x 则子女为 x+1；由应用维护或导入后重算）。
+--     说明：辈分用「自根最短代数」近似——从「不作为子女出现的成员」出发沿子边 BFS 得到 depth，再算寿命。
 -- -----------------------------------------------------------------------------
 SET @genealogy_id = '00000000-0000-0000-0000-000000000002' COLLATE utf8mb4_bin;
 
-SELECT p.Generation AS generation,
-       AVG(p.DeathYear - p.BirthYear) AS avg_lifespan_years
-FROM Persons p
-WHERE p.GenealogyId = @genealogy_id
-  AND p.BirthYear IS NOT NULL
-  AND p.DeathYear IS NOT NULL
-  AND p.DeathYear >= p.BirthYear
-GROUP BY p.Generation
+WITH RECURSIVE roots AS (
+    SELECT p.Id
+    FROM Persons p
+    WHERE p.GenealogyId = @genealogy_id
+      AND NOT EXISTS (
+          SELECT 1 FROM ParentChildren pc
+          WHERE pc.GenealogyId = @genealogy_id AND pc.ChildId = p.Id
+      )
+),
+walk AS (
+    SELECT r.Id, 0 AS depth FROM roots r
+    UNION ALL
+    SELECT c.Id, w.depth + 1
+    FROM walk w
+    JOIN ParentChildren pc ON pc.ParentId = w.Id AND pc.GenealogyId = @genealogy_id
+    JOIN Persons c ON c.Id = pc.ChildId AND c.GenealogyId = @genealogy_id
+),
+person_depth AS (
+    SELECT Id, MIN(depth) AS depth
+    FROM walk
+    GROUP BY Id
+),
+lifespan AS (
+    SELECT d.depth AS generation,
+           AVG(p.DeathYear - p.BirthYear) AS avg_lifespan_years
+    FROM person_depth d
+    JOIN Persons p ON p.Id = d.Id AND p.GenealogyId = @genealogy_id
+    WHERE p.BirthYear IS NOT NULL AND p.DeathYear IS NOT NULL AND p.DeathYear >= p.BirthYear
+    GROUP BY d.depth
+)
+SELECT generation, avg_lifespan_years
+FROM lifespan
 ORDER BY avg_lifespan_years DESC
 LIMIT 1;
 
@@ -85,20 +109,37 @@ WHERE p.GenealogyId = @genealogy_id
 
 
 -- -----------------------------------------------------------------------------
--- 5) 出生年份早于「该辈分（代）平均出生年份」的所有成员（辈分 = Persons.Generation）
+-- 5) 出生年份早于「该辈分（代）平均出生年份」的所有成员（辈分定义同查询 3 的 depth）
 -- -----------------------------------------------------------------------------
 SET @genealogy_id = '00000000-0000-0000-0000-000000000002' COLLATE utf8mb4_bin;
 
-WITH gen_avg AS (
-    SELECT p.Generation AS generation, AVG(p.BirthYear) AS avg_birth_year
-    FROM Persons p
+WITH RECURSIVE roots AS (
+    SELECT p.Id FROM Persons p
     WHERE p.GenealogyId = @genealogy_id
-      AND p.BirthYear IS NOT NULL
-    GROUP BY p.Generation
+      AND NOT EXISTS (SELECT 1 FROM ParentChildren pc WHERE pc.GenealogyId = @genealogy_id AND pc.ChildId = p.Id)
+),
+walk AS (
+    SELECT r.Id, 0 AS depth FROM roots r
+    UNION ALL
+    SELECT c.Id, w.depth + 1
+    FROM walk w
+    JOIN ParentChildren pc ON pc.ParentId = w.Id AND pc.GenealogyId = @genealogy_id
+    JOIN Persons c ON c.Id = pc.ChildId AND c.GenealogyId = @genealogy_id
+),
+person_depth AS (
+    SELECT Id, MIN(depth) AS depth FROM walk GROUP BY Id
+),
+gen_avg AS (
+    SELECT d.depth, AVG(p.BirthYear) AS avg_birth_year
+    FROM person_depth d
+    JOIN Persons p ON p.Id = d.Id AND p.GenealogyId = @genealogy_id
+    WHERE p.BirthYear IS NOT NULL
+    GROUP BY d.depth
 )
-SELECT p.Id, p.GivenName, p.BirthYear, p.Generation AS generation, ga.avg_birth_year
+SELECT p.Id, p.GivenName, p.BirthYear, pd.depth AS generation, ga.avg_birth_year
 FROM Persons p
-JOIN gen_avg ga ON ga.generation = p.Generation
+JOIN person_depth pd ON pd.Id = p.Id
+JOIN gen_avg ga ON ga.depth = pd.depth
 WHERE p.GenealogyId = @genealogy_id
   AND p.BirthYear IS NOT NULL
   AND p.BirthYear < ga.avg_birth_year;

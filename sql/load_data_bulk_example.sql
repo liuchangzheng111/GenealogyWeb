@@ -44,7 +44,7 @@ CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
 LINES TERMINATED BY '\n'
 IGNORE 1 LINES
-(@Id, @GenealogyId, @GivenName, @Gender, @BirthYear, @DeathYear, @Bio, @Generation, @CreatedAt)
+(@Id, @GenealogyId, @GivenName, @Gender, @BirthYear, @DeathYear, @Bio, @CreatedAt)
 SET Id = @Id,
     GenealogyId = @GenealogyId,
     GivenName = @GivenName,
@@ -52,7 +52,6 @@ SET Id = @Id,
     BirthYear = NULLIF(@BirthYear, ''),
     DeathYear = NULLIF(@DeathYear, ''),
     Bio = NULLIF(@Bio, ''),
-    Generation = NULLIF(@Generation, ''),
     CreatedAt = @CreatedAt;
 
 -- 4) 亲子边（Id 自增，不导入）

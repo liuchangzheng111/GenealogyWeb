@@ -24,11 +24,6 @@ namespace GenealogyWeb.Models
         /// <summary>生平简介。</summary>
         public string? Bio { get; set; }
 
-        /// <summary>
-        /// 辈分（代，从 0 起）：无父母为 0；父母为 x 则子女为 x+1。由应用层在增删亲子关系时维护，可用 <see cref="GenerationAssigner.RecalculateGenealogyAsync"/> 全量修复。
-        /// </summary>
-        public int Generation { get; set; }
-
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     }
 }

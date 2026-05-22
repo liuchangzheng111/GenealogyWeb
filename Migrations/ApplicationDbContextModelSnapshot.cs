@@ -188,9 +188,6 @@ namespace GenealogyWeb.Migrations
                     b.Property<Guid>("GenealogyId")
                         .HasColumnType("char(36)");
 
-                    b.Property<int>("Generation")
-                        .HasColumnType("int");
-
                     b.Property<string>("GivenName")
                         .IsRequired()
                         .HasColumnType("varchar(255)");

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-生成其他的批量 CSV：10 本族谱、核心成员合计 100_000 名 Persons（另为双亲/婚姻补全约数百名配偶行）；其中一本 >=50_000 且含 30 代直系父链；
+生成课程要求的批量 CSV：10 本族谱、核心成员合计 100_000 名 Persons（另为双亲/婚姻补全约数百名配偶行）；其中一本 >=50_000 且含 30 代直系父链；
 第一本支谱含「再婚/同名/半同胞」等现实向场景 + marriages.csv，其余支谱为常见名池填充。
 用法：python tools/datagen/generate_bulk_data.py --owner-id <Guid> --output-dir tools/datagen/out
 """
@@ -114,8 +114,6 @@ def _normalize_person_birth_years(persons_path: str, parent_children_path: str) 
             birth = CURRENT_YEAR
 
         row["BirthYear"] = str(birth)
-        if not row.get("Generation", "").strip():
-            row["Generation"] = "0"
 
         death_raw = row.get("DeathYear", "").strip()
         if death_raw:
@@ -126,7 +124,7 @@ def _normalize_person_birth_years(persons_path: str, parent_children_path: str) 
             if death is None or death < birth or death > CURRENT_YEAR:
                 row["DeathYear"] = ""
 
-    fieldnames = ["Id", "GenealogyId", "GivenName", "Gender", "BirthYear", "DeathYear", "Bio", "Generation", "CreatedAt"]
+    fieldnames = ["Id", "GenealogyId", "GivenName", "Gender", "BirthYear", "DeathYear", "Bio", "CreatedAt"]
     with open(persons_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -163,7 +161,7 @@ def _append_persons_and_edges_big(
         name = bulk_display_name_for_birth(surname, name_base + i, birth)
         death = maybe_death_year(birth, name_base + i)
         w_persons.writerow(
-            [spine_ids[i], gid, name, "男", str(birth), death, f"主干第{i}代", str(i), created_at]
+            [spine_ids[i], gid, name, "男", str(birth), death, f"主干第{i}代", created_at]
         )
 
     # 主干：每位父亲配母亲（与下一子代同父母），并写婚姻；侧枝与对应子代共母。
@@ -186,7 +184,6 @@ def _append_persons_and_edges_big(
                 str(mb),
                 maybe_death_year(mb, name_base + 50_000 + i),
                 f"配{surname}氏·主干第{i + 1}代母",
-                str(i),
                 created_at,
             ]
         )
@@ -199,7 +196,7 @@ def _append_persons_and_edges_big(
         w_pc.writerow([gid, spine_ids[i], spine_ids[i + 1], "father"])
         w_pc.writerow([gid, spine_mother_ids[i], spine_ids[i + 1], "mother"])
 
-    def _branch_spouse(child_birth: int, child_gen: int, seed: int) -> tuple[str, int]:
+    def _branch_spouse(child_birth: int, seed: int) -> tuple[str, int]:
         spouse_birth = child_birth + ((seed % 5) - 2)
         if spouse_birth >= CURRENT_YEAR:
             spouse_birth = CURRENT_YEAR - 1
@@ -221,24 +218,23 @@ def _append_persons_and_edges_big(
                 str(spouse_birth),
                 maybe_death_year(spouse_birth, 900_000 + seed),
                 "主干分支·配偶",
-                str(child_gen),
                 created_at,
             ]
         )
         return spouse_id, spouse_birth
 
     created = spine_len + len(spine_mother_ids)
-    branch_queue: deque[tuple[str, int, int, str, int, int]] = deque()
+    branch_queue: deque[tuple[str, int, str, int, int]] = deque()
     for i in range(spine_len - 1):
-        branch_queue.append((spine_ids[i], i, spine_births[i], spine_mother_ids[i], i, spine_mother_births[i]))
+        branch_queue.append((spine_ids[i], spine_births[i], spine_mother_ids[i], spine_mother_births[i], 0))
 
     branch_seed = 0
     while branch_queue and created < target_count:
-        father_id, father_gen, father_birth, mother_id, mother_gen, mother_birth = branch_queue.popleft()
+        father_id, father_birth, mother_id, mother_birth, generation = branch_queue.popleft()
         if father_birth > CURRENT_YEAR - 22:
             continue
 
-        branch_children = 3 if father_gen < 6 else 2 if father_gen < 9 else 1
+        branch_children = 3 if generation < 6 else 2 if generation < 9 else 1
         branch_children = min(branch_children, target_count - created)
 
         for slot in range(branch_children):
@@ -252,10 +248,7 @@ def _append_persons_and_edges_big(
             child_gender = "男" if (branch_seed + slot) % 2 == 0 else "女"
             child_name = bulk_display_name_for_birth(surname, name_base + created, child_birth)
             child_death = maybe_death_year(child_birth, name_base + created)
-            child_gen = father_gen + 1
-            w_persons.writerow(
-                [child_id, gid, child_name, child_gender, str(child_birth), child_death, "主干分支", str(child_gen), created_at]
-            )
+            w_persons.writerow([child_id, gid, child_name, child_gender, str(child_birth), child_death, "主干分支", created_at])
             w_pc.writerow([gid, father_id, child_id, "father"])
             w_pc.writerow([gid, mother_id, child_id, "mother"])
             created += 1
@@ -264,11 +257,11 @@ def _append_persons_and_edges_big(
                 break
 
             # 让每个分支中的一部分孩子继续繁衍，形成稳定的树，而不是爆炸式扇出。
-            if father_gen < 8:
-                spouse_id, spouse_birth = _branch_spouse(child_birth, child_gen, branch_seed + slot)
+            if generation < 8:
+                spouse_id, spouse_birth = _branch_spouse(child_birth, branch_seed + slot)
                 wed = wedding_year_hetero(child_birth, spouse_birth, None, branch_seed + slot)
                 w_m.writerow([gid, child_id, spouse_id, str(wed), "", bulk_marriage_note() + "·分支"])
-                branch_queue.append((child_id, child_gen, child_birth, spouse_id, child_gen, spouse_birth))
+                branch_queue.append((child_id, child_birth, spouse_id, spouse_birth, generation + 1))
 
         branch_seed += 1
 
@@ -288,10 +281,7 @@ def _append_persons_and_edges_big(
         child_gender = "男" if created % 2 == 0 else "女"
         child_name = bulk_display_name_for_birth(surname, name_base + created, child_birth)
         child_death = maybe_death_year(child_birth, name_base + created)
-        leaf_gen = parent_idx + 1
-        w_persons.writerow(
-            [child_id, gid, child_name, child_gender, str(child_birth), child_death, "主干叶节点", str(leaf_gen), created_at]
-        )
+        w_persons.writerow([child_id, gid, child_name, child_gender, str(child_birth), child_death, "主干叶节点", created_at])
         w_pc.writerow([gid, father_id, child_id, "father"])
         w_pc.writerow([gid, mother_id, child_id, "mother"])
         created += 1
@@ -351,7 +341,6 @@ def _append_persons_and_edges_small(
                 str(b),
                 maybe_death_year(b, name_base + i),
                 f"{surname}氏批量支系·主干",
-                str(i),
                 created_at,
             ]
         )
@@ -374,7 +363,6 @@ def _append_persons_and_edges_small(
                 str(mb),
                 maybe_death_year(mb, name_base + 60_000 + i),
                 f"配{surname}氏·支系主干",
-                str(i),
                 created_at,
             ]
         )
@@ -407,7 +395,6 @@ def _append_persons_and_edges_small(
                 str(child_birth),
                 maybe_death_year(child_birth, name_base + j),
                 f"{surname}氏批量叶节点",
-                str(parent_idx + 1),
                 created_at,
             ]
         )
@@ -465,7 +452,7 @@ def main() -> None:
         w_p = csv.writer(f_p)
         w_pc = csv.writer(f_pc)
         w_m = csv.writer(f_m)
-        w_p.writerow(["Id", "GenealogyId", "GivenName", "Gender", "BirthYear", "DeathYear", "Bio", "Generation", "CreatedAt"])
+        w_p.writerow(["Id", "GenealogyId", "GivenName", "Gender", "BirthYear", "DeathYear", "Bio", "CreatedAt"])
         w_pc.writerow(["GenealogyId", "ParentId", "ChildId", "RelationshipType"])
         w_m.writerow(["GenealogyId", "SpouseAId", "SpouseBId", "MarriedAtYear", "DivorcedAtYear", "Note"])
 
